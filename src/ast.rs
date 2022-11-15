@@ -2,7 +2,7 @@ use crate::tokenizer::{AssignmentOperator, Literal};
 
 use super::tokenizer::{Keyword, Operator, Symbol, TokenKind};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Module {
     pub body: Vec<Declaration>,
     pub submodules: Vec<Module>,
@@ -10,14 +10,14 @@ pub struct Module {
     pub name: String,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Declaration {
     Function(FunctionDeclaration),
     Struct(StructDeclaration),
     Module(Module),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct FunctionDeclaration {
     pub name: String,
     pub return_type: Option<String>,
@@ -25,43 +25,43 @@ pub struct FunctionDeclaration {
     pub body: Block,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct StructDeclaration {
     pub name: String,
     pub fields: Vec<StructField>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct StructField {
-    pub field_name: String,
+    pub name: String,
     pub type_name: String,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct StructInitializer {
     pub struct_name: String,
     pub fields: Vec<StructInitializerField>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct StructInitializerField {
     pub field_name: String,
     pub value: Expression,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct FunctionCall {
     pub callee: Box<Expression>,
     pub args: Vec<Expression>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct FunctionParameter {
     pub name: String,
     pub type_name: String,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Expression {
     BinaryOp {
         left: Box<Expression>,
@@ -77,71 +77,87 @@ pub enum Expression {
         expr: Box<Expression>,
         op: Operator,
     },
-    Identifier(String),
-    Literal(Literal),
-    If(IfExpression),
-    Block(Block),
-    VarAssignment(VarAssignment),
-    FnCall(FunctionCall),
-    MemberAccess(MemberAccess),
-    StructInitializer(StructInitializer),
+    Identifier {
+        name: String,
+    },
+    Literal {
+        literal: Literal,
+    },
+    If {
+        expr: IfExpression,
+    },
+    Block {
+        block: Block,
+    },
+    VarAssignment {
+        var_assign: VarAssignment,
+    },
+    FnCall {
+        fn_call: FunctionCall,
+    },
+    MemberAccess {
+        member_access: MemberAccess,
+    },
+    StructInitializer {
+        struct_init: StructInitializer,
+    },
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct MemberAccess {
     pub object: Box<Expression>,
     pub member: Box<Expression>,
     pub computed: bool,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Statement {
-    VariableDeclaration(VarDeclaration),
-    ExpressionStatement(Expression),
-    LoopStatement(LoopStatement),
-    ReturnStatement(ReturnStatement),
-    YieldStatement(YieldStatement),
-    ContinueStatement,
-    BreakStatement,
+    Variable(VarDeclaration),
+    Expression(Expression),
+    Loop(LoopStatement),
+    Return(ReturnStatement),
+    Yield(YieldStatement),
+    Continue,
+    Break,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct VarAssignment {
     pub operator: AssignmentOperator,
     pub left: Box<Expression>,
     pub right: Box<Expression>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct VarDeclaration {
     pub name: String,
     pub type_name: String,
     pub initializer: Option<Expression>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct IfExpression {
     pub condition: Box<Expression>,
     pub body: Box<Statement>,
     pub else_body: Box<Option<Statement>>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct LoopStatement {
     pub body: Block,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct ReturnStatement {
     pub value: Option<Expression>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct YieldStatement {
     pub value: Expression,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Block {
     pub statements: Vec<Statement>,
 }

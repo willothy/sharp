@@ -11,24 +11,26 @@ use crate::{
     },
 };
 
-pub fn parse(tokens: Vec<Token>, mod_name: String) -> Result<Module, String> {
+pub fn parse<'parse>(tokens: Vec<Token>, mod_name: String) -> Result<Module, String> {
     let mut parser = Parser::new(tokens);
     let module = parser.module(mod_name)?;
     Ok(module)
 }
 
-struct Parser {
+struct Parser<'parser> {
     tokens: Vec<Token>,
     current: usize,
     lookahead: usize,
+    lifetime: std::marker::PhantomData<&'parser ()>,
 }
 
-impl Parser {
+impl<'parser> Parser<'parser> {
     pub fn new(tokens: Vec<Token>) -> Self {
         Self {
             tokens,
             current: 0,
             lookahead: 1,
+            lifetime: std::marker::PhantomData,
         }
     }
 
@@ -293,7 +295,7 @@ impl Parser {
             };
 
             fields.push(StructField {
-                field_name,
+                name: field_name,
                 type_name,
             });
 
@@ -337,20 +339,22 @@ impl Parser {
         let left = self.logical_or()?;
 
         if let Some(TokenKind::Operator(Operator::Assign(op))) = self.current() {
-            Ok(Expression::VarAssignment(VarAssignment {
-                operator: op,
-                left: Box::from(self.validate_assign_target(left)?),
-                right: Box::from(self.expression()?),
-            }))
+            Ok(Expression::VarAssignment {
+                var_assign: VarAssignment {
+                    operator: op,
+                    left: Box::from(self.validate_assign_target(left)?),
+                    right: Box::from(self.expression()?),
+                },
+            })
         } else {
             Ok(left)
         }
     }
 
     fn validate_assign_target(&self, target: Expression) -> Result<Expression, String> {
-        match target {
-            Expression::Identifier(_) => Ok(target),
-            Expression::MemberAccess(_) => Ok(target),
+        match &target {
+            Expression::Identifier { name } => Ok(target),
+            Expression::MemberAccess { member_access } => Ok(target),
             //Expression::IndexAccess(_) => Ok(()),
             _ => Err(format!(
                 "Invalid assignment target: {:?} at {}",
@@ -370,11 +374,13 @@ impl Parser {
         } else {
             None
         };
-        Ok(Expression::If(IfExpression {
-            condition: Box::from(condition),
-            body: Box::from(body),
-            else_body: Box::from(else_body),
-        }))
+        Ok(Expression::If {
+            expr: IfExpression {
+                condition: Box::from(condition),
+                body: Box::from(body),
+                else_body: Box::from(else_body),
+            },
+        })
     }
 
     pub fn struct_init(&mut self) -> Result<Expression, String> {
@@ -408,14 +414,18 @@ impl Parser {
                 self.advance();
             } else if let Some(TokenKind::Symbol(Symbol::Comma)) = self.current() {
                 self.advance();
-                let value = Expression::Identifier(field_name.clone());
+                let value = Expression::Identifier {
+                    name: field_name.clone(),
+                };
                 fields.push(StructInitializerField {
                     field_name: field_name.clone(),
                     value,
                 });
                 continue;
             } else if let Some(TokenKind::Symbol(Symbol::CloseBrace)) = self.current() {
-                let value = Expression::Identifier(field_name.clone());
+                let value = Expression::Identifier {
+                    name: field_name.clone(),
+                };
                 fields.push(StructInitializerField {
                     field_name: field_name.clone(),
                     value,
@@ -438,10 +448,12 @@ impl Parser {
                 self.expect(&TokenKind::Symbol(Symbol::CloseBrace))?;
             }
         }
-        Ok(Expression::StructInitializer(StructInitializer {
-            struct_name: name,
-            fields,
-        }))
+        Ok(Expression::StructInitializer {
+            struct_init: StructInitializer {
+                struct_name: name,
+                fields,
+            },
+        })
     }
 
     pub fn expression(&mut self) -> Result<Expression, String> {
@@ -450,7 +462,9 @@ impl Parser {
         if let Some(TokenKind::Keyword(Keyword::If)) = curr {
             return self.if_expr();
         } else if let Some(TokenKind::Symbol(Symbol::OpenBrace)) = curr {
-            return Ok(Expression::Block(self.block()?));
+            return Ok(Expression::Block {
+                block: self.block()?,
+            });
         } else if let Some(TokenKind::Identifier(_)) = curr {
             if let Some(TokenKind::Symbol(Symbol::OpenBrace)) = self.lookahead() {
                 return Ok(self.struct_init()?);
@@ -498,7 +512,7 @@ impl Parser {
             } else {
                 None
             };
-        Ok(Statement::VariableDeclaration(VarDeclaration {
+        Ok(Statement::Variable(VarDeclaration {
             name,
             type_name,
             initializer,
@@ -515,32 +529,30 @@ impl Parser {
                     let value = self.expression()?;
                     Some(value)
                 };
-                Ok(Statement::ReturnStatement(ReturnStatement { value }))
+                Ok(Statement::Return(ReturnStatement { value }))
             }
             Some(TokenKind::Keyword(Keyword::Yield)) => {
                 self.advance();
                 let expression = self.expression()?;
-                Ok(Statement::YieldStatement(YieldStatement {
-                    value: expression,
-                }))
+                Ok(Statement::Yield(YieldStatement { value: expression }))
             }
             Some(TokenKind::Keyword(Keyword::Break)) => {
                 self.advance();
-                Ok(Statement::BreakStatement)
+                Ok(Statement::Break)
             }
             Some(TokenKind::Keyword(Keyword::Continue)) => {
                 self.advance();
-                Ok(Statement::ContinueStatement)
+                Ok(Statement::Continue)
             }
             Some(TokenKind::Keyword(Keyword::Loop)) => {
                 self.advance();
                 let body = self.block()?;
-                Ok(Statement::LoopStatement(LoopStatement { body }))
+                Ok(Statement::Loop(LoopStatement { body }))
             }
             Some(TokenKind::Keyword(Keyword::Let)) => self.var_declaration(),
             Some(_) => {
                 let expression = self.expression()?;
-                Ok(Statement::ExpressionStatement(expression))
+                Ok(Statement::Expression(expression))
             }
             None => Err("Unexpected EOF".to_string()),
         }?;
@@ -551,7 +563,7 @@ impl Parser {
 
     fn logical_expr_helper(
         &mut self,
-        builder: fn(&mut Parser) -> Result<Expression, String>,
+        builder: fn(&mut Parser<'parser>) -> Result<Expression, String>,
         _op_type: OperatorType,
     ) -> Result<Expression, String> {
         let mut left = builder(self)?;
@@ -571,7 +583,7 @@ impl Parser {
 
     fn binary_expr_helper(
         &mut self,
-        builder: fn(&mut Parser) -> Result<Expression, String>,
+        builder: fn(&mut Parser<'parser>) -> Result<Expression, String>,
         _op_type: OperatorType,
     ) -> Result<Expression, String> {
         let mut left = builder(self)?;
@@ -651,10 +663,12 @@ impl Parser {
     }
 
     fn call_expr(&mut self, callee: Expression) -> Result<Expression, String> {
-        Ok(Expression::FnCall(FunctionCall {
-            callee: Box::from(callee),
-            args: self.arguments()?,
-        }))
+        Ok(Expression::FnCall {
+            fn_call: FunctionCall {
+                callee: Box::from(callee),
+                args: self.arguments()?,
+            },
+        })
     }
 
     pub fn arguments(&mut self) -> Result<Vec<Expression>, String> {
@@ -692,21 +706,25 @@ impl Parser {
             if let Some(TokenKind::Symbol(Symbol::Dot)) = self.current() {
                 self.advance();
                 let prop = self.identifier()?;
-                object = Expression::MemberAccess(MemberAccess {
-                    object: Box::from(object),
-                    member: Box::from(prop),
-                    computed: false,
-                });
+                object = Expression::MemberAccess {
+                    member_access: MemberAccess {
+                        object: Box::from(object),
+                        member: Box::from(prop),
+                        computed: false,
+                    },
+                };
             } else {
                 self.advance();
                 let prop = self.expression()?;
                 self.expect(&TokenKind::Symbol(Symbol::CloseBracket))?;
                 self.advance();
-                object = Expression::MemberAccess(MemberAccess {
-                    object: Box::from(object),
-                    member: Box::from(prop),
-                    computed: true,
-                });
+                object = Expression::MemberAccess {
+                    member_access: MemberAccess {
+                        object: Box::from(object),
+                        member: Box::from(prop),
+                        computed: true,
+                    },
+                };
             }
         }
 
@@ -717,7 +735,7 @@ impl Parser {
         match self.current() {
             Some(TokenKind::Identifier(id)) => {
                 self.advance();
-                Ok(Expression::Identifier(id))
+                Ok(Expression::Identifier { name: id })
             }
             Some(_) => Err("Expected identifier".to_string()),
             None => Err("Unexpected EOF".to_string()),
@@ -739,7 +757,7 @@ impl Parser {
             return Err("Expected literal".to_string());
         };
         self.advance();
-        Ok(Expression::Literal(literal))
+        Ok(Expression::Literal { literal })
     }
 
     fn paren_expr(&mut self) -> Result<Expression, String> {

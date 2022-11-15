@@ -170,6 +170,50 @@ pub enum OperatorType {
     Bitwise,
 }
 
+impl Display for AssignmentOperator {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AssignmentOperator::AddAssign => write!(f, "+="),
+            AssignmentOperator::SubAssign => write!(f, "-="),
+            AssignmentOperator::MulAssign => write!(f, "*="),
+            AssignmentOperator::DivAssign => write!(f, "/="),
+            AssignmentOperator::ModAssign => write!(f, "%="),
+            AssignmentOperator::Assign => write!(f, "="),
+        }
+    }
+}
+
+impl std::fmt::Display for Operator {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Operator::Assign(op) => {
+                write!(f, "{}", op)
+            }
+            Operator::Plus => write!(f, "+"),
+            Operator::Minus => write!(f, "-"),
+            Operator::Times => write!(f, "*"),
+            Operator::Divide => write!(f, "/"),
+            Operator::Modulo => write!(f, "%"),
+            Operator::Power => write!(f, "^"),
+            Operator::Equals => write!(f, "=="),
+            Operator::NotEquals => write!(f, "!="),
+            Operator::LessThan => write!(f, "<"),
+            Operator::LessThanEquals => write!(f, "<="),
+            Operator::GreaterThan => write!(f, ">"),
+            Operator::GreaterThanEquals => write!(f, ">="),
+            Operator::And => write!(f, "&&"),
+            Operator::Or => write!(f, "||"),
+            Operator::Not => write!(f, "!"),
+            Operator::BitwiseAnd => write!(f, "&"),
+            Operator::BitwiseOr => write!(f, "|"),
+            Operator::BitwiseXor => write!(f, "^"),
+            Operator::BitwiseNot => write!(f, "~"),
+            Operator::BitwiseLeftShift => write!(f, "<<"),
+            Operator::BitwiseRightShift => write!(f, ">>"),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum AssignmentOperator {
     AddAssign,
