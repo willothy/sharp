@@ -11,9 +11,10 @@ use inkwell::{
     values::{BasicValue, BasicValueEnum, InstructionValue},
 };
 
+use crate::typechecker::context::TypeCheckContext;
 use crate::{
     ast::Declaration,
-    typechecker::{FunctionType, TypeCheckContext, TypeSignature},
+    typechecker::type_sig::{FunctionType, TypeSignature},
 };
 
 use super::context::{to_basic, CodegenContext, CodegenName, CodegenType, LocalCodegenContext};
@@ -45,13 +46,13 @@ impl<'gen> CodeGenerator<'gen> {
         self.ctx.add_primitive_types(&mut local_ctx);
 
         for (name, name_ctx) in &self.ctx.tc_ctx.types {
-            let type_sig = name_ctx.borrow_mut().type_.clone();
+            let type_sig = name_ctx.borrow_mut().sig.clone();
             let llvm_t = self.ctx.to_llvm_ty(&type_sig)?;
             local_ctx.add_type(CodegenType::new(name.clone(), type_sig.clone(), llvm_t));
         }
 
         for (name, name_ctx) in &self.ctx.tc_ctx.names {
-            let t = &name_ctx.var_type.borrow_mut().type_;
+            let t = &name_ctx.var_type.borrow_mut().sig;
             let t = if let TypeSignature::Function(fn_t) = t {
                 Rc::from(CodegenType::new(
                     name.clone(),
@@ -111,7 +112,7 @@ impl<'gen> CodeGenerator<'gen> {
 
         for param in &func.params {
             let type_sig = self.ctx.tc_ctx.get_type(param.type_name.clone())?;
-            let type_sig = &type_sig.borrow_mut().type_;
+            let type_sig = &type_sig.borrow_mut().sig;
             let Some(param_type) = local_ctx.get_type(type_sig) else {
                 return Err(format!("Type not found: {:?}", type_sig).into());
             };
@@ -156,7 +157,7 @@ impl<'gen> CodeGenerator<'gen> {
         let Ok(type_reg) = self.ctx.tc_ctx.get_type(var_stmt.type_name.clone()) else {
             return Err(format!("Type not found: {}", var_stmt.type_name).into());
         };
-        let type_sig = &type_reg.borrow_mut().type_;
+        let type_sig = &type_reg.borrow_mut().sig;
 
         let Some(var_type) = local_ctx.get_type(type_sig) else {
             return Err(format!("Type not found: {:?}", var_stmt.type_name).into());

@@ -7,13 +7,16 @@ use inkwell::{
     values::PointerValue,
 };
 
-use crate::typechecker::{self, FunctionType, PrimitiveType, StructType, TypeSignature};
+use crate::typechecker::{
+    self,
+    type_sig::{FunctionType, PrimitiveType, StructType, TypeSignature},
+};
 
 pub struct CodegenContext<'ctx> {
     pub llvm_ctx: &'ctx inkwell::context::Context,
     pub llvm_module: inkwell::module::Module<'ctx>,
     pub ir_builder: inkwell::builder::Builder<'ctx>,
-    pub tc_ctx: &'ctx typechecker::TypeCheckContext<'ctx>,
+    pub tc_ctx: &'ctx typechecker::context::TypeCheckContext<'ctx>,
 }
 
 #[derive(Debug, Clone)]
@@ -52,7 +55,7 @@ impl<'ctx> CodegenContext<'ctx> {
         llvm_ctx: &'ctx inkwell::context::Context,
         module: inkwell::module::Module<'ctx>,
         builder: inkwell::builder::Builder<'ctx>,
-        tc_context: &'ctx typechecker::TypeCheckContext<'ctx>,
+        tc_context: &'ctx typechecker::context::TypeCheckContext<'ctx>,
     ) -> Self {
         let mut ctx = Self {
             llvm_ctx,
@@ -118,13 +121,13 @@ impl<'ctx> CodegenContext<'ctx> {
         let mut param_types: Vec<BasicMetadataTypeEnum> = Vec::new();
         for param in f.params.values() {
             let param_type = self
-                .to_llvm_basic_ty(&param.param_type.borrow_mut().type_.clone())?
+                .to_llvm_basic_ty(&param.param_type.borrow_mut().sig.clone())?
                 .into();
             param_types.push(param_type);
         }
 
         let return_type = if let Some(ret) = &f.return_type {
-            let t = ret.borrow_mut().type_.clone();
+            let t = ret.borrow_mut().sig.clone();
             self.to_llvm_ty(&t)?
         } else {
             self.llvm_ctx.void_type().into()
@@ -159,7 +162,7 @@ impl<'ctx> CodegenContext<'ctx> {
     pub fn struct_to_llvm_ty(&self, s: &StructType<'ctx>) -> Result<BasicTypeEnum<'ctx>, String> {
         let mut field_types: Vec<BasicTypeEnum<'ctx>> = Vec::new();
         for field in s.fields.values() {
-            let field_type = self.to_llvm_basic_ty(&field.field_type.borrow_mut().type_.clone())?;
+            let field_type = self.to_llvm_basic_ty(&field.field_type.borrow_mut().sig.clone())?;
             field_types.push(field_type);
         }
 
