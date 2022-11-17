@@ -1,1 +1,4 @@
 /target
+test.c
+test.ll
+test.s

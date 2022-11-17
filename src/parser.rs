@@ -1,9 +1,9 @@
 use crate::{
     ast::{
-        Block, Declaration, Expression, FunctionCall, FunctionDeclaration, FunctionParameter,
-        IfExpression, LoopStatement, MemberAccess, Module, ReturnStatement, Statement,
-        StructDeclaration, StructField, StructInitializer, StructInitializerField, VarAssignment,
-        VarDeclaration, YieldStatement,
+        Block, Declaration, Expression, FunctionCall, FunctionDeclaration, FunctionDefinition,
+        FunctionParameter, IfExpression, LoopStatement, MemberAccess, Module, ReturnStatement,
+        Statement, StructDeclaration, StructField, StructInitializer, StructInitializerField,
+        VarAssignment, VarDeclaration, YieldStatement,
     },
     tokenizer::{
         AssignmentOperator, Keyword, Operator, OperatorType, Symbol, Token, TokenKind,
@@ -115,8 +115,14 @@ impl<'parser> Parser<'parser> {
         loop {
             match self.current() {
                 Some(TokenKind::Keyword(Keyword::Function)) => {
-                    let function = self.function_decl()?;
-                    body.push(Declaration::Function(function));
+                    let fn_sig = self.function_sig()?;
+                    if let Some(TokenKind::Symbol(Symbol::Semicolon)) = self.current() {
+                        let func_decl: FunctionDeclaration = self.function_decl(fn_sig)?;
+                        body.push(Declaration::FunctionDecl(func_decl));
+                    } else {
+                        let func = self.function_def(fn_sig)?;
+                        body.push(Declaration::FunctionDef(func));
+                    }
                 }
                 Some(TokenKind::Keyword(Keyword::Struct)) => {
                     let structure = self.struct_decl()?;
@@ -168,6 +174,7 @@ impl<'parser> Parser<'parser> {
 
     pub fn fn_params(&mut self) -> Result<Vec<FunctionParameter>, String> {
         let mut params = Vec::new();
+        let mut param_idx: u32 = 0;
         loop {
             if let Some(TokenKind::Symbol(Symbol::CloseParen)) = self.current() {
                 self.advance();
@@ -210,12 +217,16 @@ impl<'parser> Parser<'parser> {
             params.push(FunctionParameter {
                 name: param_name,
                 type_name: param_type,
+                idx: param_idx,
             });
+            param_idx += 1;
         }
         Ok(params)
     }
 
-    pub fn function_decl(&mut self) -> Result<crate::ast::FunctionDeclaration, String> {
+    pub fn function_sig(
+        &mut self,
+    ) -> Result<(String, Vec<FunctionParameter>, Option<String>), String> {
         self.advance(); // Skip function keyword
         let name = if let Some(TokenKind::Identifier(name)) = self.current() {
             name.clone()
@@ -248,10 +259,17 @@ impl<'parser> Parser<'parser> {
         } else {
             None
         };
+        Ok((name, params, return_type))
+    }
 
+    pub fn function_def(
+        &mut self,
+        fn_sig: (String, Vec<FunctionParameter>, Option<String>),
+    ) -> Result<crate::ast::FunctionDefinition, String> {
+        let (name, params, return_type) = fn_sig;
         let body = self.block()?;
 
-        Ok(FunctionDeclaration {
+        Ok(FunctionDefinition {
             name,
             return_type,
             params,
@@ -272,6 +290,7 @@ impl<'parser> Parser<'parser> {
         };
         let mut fields = Vec::new();
         self.eat(TokenKind::Symbol(Symbol::OpenBrace))?;
+        let mut field_idx = 0;
         loop {
             if let Some(TokenKind::Symbol(Symbol::CloseBrace)) = self.current() {
                 self.advance();
@@ -297,7 +316,9 @@ impl<'parser> Parser<'parser> {
             fields.push(StructField {
                 name: field_name,
                 type_name,
+                idx: field_idx,
             });
+            field_idx += 1;
 
             match self.current() {
                 Some(TokenKind::Symbol(Symbol::Comma)) => {
@@ -365,12 +386,11 @@ impl<'parser> Parser<'parser> {
     }
 
     pub fn if_expr(&mut self) -> Result<Expression, String> {
-        self.advance();
+        self.eat(TokenKind::Keyword(Keyword::If))?;
         let condition = self.expression()?;
-        let body = self.statement()?;
-        let else_body = if let Some(TokenKind::Keyword(Keyword::Else)) = self.current() {
-            self.advance();
-            Some(self.statement()?)
+        let body = self.expression()?;
+        let else_body = if let Some(TokenKind::Keyword(Keyword::Else)) = self.advance() {
+            Some(self.expression()?)
         } else {
             None
         };
@@ -396,6 +416,7 @@ impl<'parser> Parser<'parser> {
 
         self.eat(TokenKind::Symbol(Symbol::OpenBrace))?;
         let mut fields = Vec::new();
+        let mut field_idx = 0;
         loop {
             if let Some(TokenKind::Symbol(Symbol::CloseBrace)) = self.current() {
                 self.advance();
@@ -420,7 +441,9 @@ impl<'parser> Parser<'parser> {
                 fields.push(StructInitializerField {
                     field_name: field_name.clone(),
                     value,
+                    idx: field_idx,
                 });
+                field_idx += 1;
                 continue;
             } else if let Some(TokenKind::Symbol(Symbol::CloseBrace)) = self.current() {
                 let value = Expression::Identifier {
@@ -429,6 +452,7 @@ impl<'parser> Parser<'parser> {
                 fields.push(StructInitializerField {
                     field_name: field_name.clone(),
                     value,
+                    idx: field_idx,
                 });
                 break;
             } else {
@@ -440,7 +464,12 @@ impl<'parser> Parser<'parser> {
             }
 
             let value = self.expression()?;
-            fields.push(StructInitializerField { field_name, value });
+            fields.push(StructInitializerField {
+                field_name,
+                value,
+                idx: field_idx,
+            });
+            field_idx += 1;
 
             if let Some(TokenKind::Symbol(Symbol::Comma)) = self.current() {
                 self.advance();
@@ -744,7 +773,7 @@ impl<'parser> Parser<'parser> {
 
     pub fn primary_expr(&mut self) -> Result<Expression, String> {
         match self.current() {
-            Some(TokenKind::Literal(literal)) => Ok(self.literal()?),
+            Some(TokenKind::Literal(_)) => Ok(self.literal()?),
             Some(TokenKind::Symbol(Symbol::OpenParen)) => Ok(self.paren_expr()?),
             Some(TokenKind::Identifier(_)) => Ok(self.identifier()?),
             Some(_) => Ok(self.left_hand_side_expr()?),
@@ -767,5 +796,17 @@ impl<'parser> Parser<'parser> {
         self.expect(&TokenKind::Symbol(Symbol::CloseParen))?;
         self.advance();
         Ok(expr)
+    }
+
+    fn function_decl(
+        &mut self,
+        fn_sig: (String, Vec<FunctionParameter>, Option<String>),
+    ) -> Result<FunctionDeclaration, String> {
+        self.eat(TokenKind::Symbol(Symbol::Semicolon))?;
+        Ok(FunctionDeclaration {
+            name: fn_sig.0,
+            params: fn_sig.1,
+            return_type: fn_sig.2,
+        })
     }
 }

@@ -1,627 +1,916 @@
 // Author: Will Hopkins
 
-use std::{
-    borrow::Borrow,
-    cell::RefCell,
-    collections::{HashMap, HashSet},
-    rc::Rc,
-};
+use std::collections::HashMap;
 
 use crate::{
-    ast::{self, Block, Declaration, Expression, FunctionDeclaration, StructDeclaration},
-    tokenizer::{AssignmentOperator, Operator},
+    ast::{
+        self, Block, Declaration, Expression, FunctionDeclaration, FunctionDefinition,
+        MemberAccess, StructDeclaration, StructInitializer, StructInitializerField, VarDeclaration,
+    },
+    tokenizer::{Literal, Operator},
     typechecker::{
         context::new_type,
         type_sig::{Name, Type, TypeSignature},
+        typed_ast::{TypedExpression, TypedReturnStatement, TypedYieldStatement},
     },
 };
 
 use super::{
-    context::{load_module_ctx, TypeCheckContext, TypeRef},
-    type_sig::{FunctionParameter, FunctionType, PrimitiveType, StructField, StructType},
+    context::{LocalTypecheckContext, TypeCheckContext, TypeRef, TypeSig},
+    type_sig::{
+        self, FunctionType, PrimitiveType, StructType, TypedFunctionParameter, TypedStructField,
+    },
+    typed_ast::{
+        self, TypedBlock, TypedDeclaration, TypedExpressionData, TypedFunctionCall,
+        TypedFunctionDeclaration, TypedFunctionDefinition, TypedIfExpression, TypedLiteral,
+        TypedMemberAccess, TypedStatement, TypedStructDeclaration, TypedStructInitializer,
+        TypedStructInitializerField, TypedVarAssignment,
+    },
 };
 
-pub fn preload_types<'ctx>(
-    declarations: &Vec<Declaration>,
-    ctx: &mut TypeCheckContext<'ctx>,
-) -> Result<(), String> {
-    use Declaration::*;
-    // Load all types without fields for resolving circular dependencies
-    for decl in declarations {
-        match decl {
-            Struct(structure) => {
-                ctx.types.insert(
+#[derive(Debug, Clone)]
+pub struct TypeCheckModule<'tc> {
+    pub ctx: TypeCheckContext<'tc>,
+    pub module: super::typed_ast::TypedModule<'tc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TypeChecker<'tc> {
+    pub ctx: TypeCheckContext<'tc>,
+}
+
+impl<'tc> TypeChecker<'tc> {
+    pub fn new() -> Self {
+        Self {
+            ctx: TypeCheckContext::new(),
+        }
+    }
+
+    pub fn typecheck_module(
+        &'tc mut self,
+        module: &'tc ast::Module,
+    ) -> Result<TypeCheckModule<'tc>, String> {
+        self.preload_structs(&module.body)?;
+
+        let mut typed_decls = Vec::new();
+
+        // Resolve struct types
+        for decl in &module.body {
+            if let Declaration::Struct(s) = decl {
+                let typed_decl: TypedStructDeclaration<'tc> = self.typecheck_struct_decl(&s)?;
+                let struct_type = typed_decl.ty.clone();
+                self.ctx.types.insert(s.name.clone(), struct_type);
+                typed_decls.push(TypedDeclaration::Struct(typed_decl));
+            }
+        }
+
+        // Resolve function types
+        for decl in &module.body {
+            if let Declaration::FunctionDef(f) = decl {
+                let fn_type: Type = self.resolve_fn_def_type(&f)?;
+                self.ctx.names.insert(
+                    f.name.clone(),
+                    Name {
+                        ty: new_type(fn_type),
+                    },
+                );
+            } else if let Declaration::FunctionDecl(f) = decl {
+                let fn_type: Type = self.resolve_fn_decl_type(&f)?;
+                self.ctx.names.insert(
+                    f.name.clone(),
+                    Name {
+                        ty: new_type(fn_type),
+                    },
+                );
+            }
+        }
+
+        let local_ctx = LocalTypecheckContext::from(&self.ctx);
+
+        // Typecheck functions
+        for decl in &module.body {
+            if let Declaration::FunctionDef(f) = decl {
+                let typed_decl: TypedFunctionDefinition<'tc> =
+                    self.typecheck_fn_def(&f, local_ctx.clone())?;
+                typed_decls.push(TypedDeclaration::FunctionDef(typed_decl));
+            } else if let Declaration::FunctionDecl(f) = decl {
+                let typed_decl: TypedFunctionDeclaration<'tc> =
+                    self.typecheck_fn_decl(&f, local_ctx.clone())?;
+
+                typed_decls.push(TypedDeclaration::FunctionDecl(typed_decl));
+            }
+        }
+
+        let typed_module = super::typed_ast::TypedModule {
+            name: module.name.clone(),
+            body: typed_decls,
+        };
+
+        Ok(TypeCheckModule {
+            ctx: self.ctx.clone(),
+            module: typed_module,
+        })
+    }
+
+    fn typecheck_fn_decl(
+        &self,
+        function: &FunctionDeclaration,
+        mut local_ctx: LocalTypecheckContext<'tc>,
+    ) -> Result<TypedFunctionDeclaration<'tc>, String> {
+        use TypeSignature::*;
+        let fn_type = self.resolve_fn_decl_type(function)?;
+        let Function(FunctionType {
+            return_type,
+            params,
+        }) = &fn_type.sig else {
+            return Err(format!(
+                "Expected function type, found {:?}",
+                fn_type.sig
+            ));
+        };
+        local_ctx.return_type = return_type.clone();
+        for (_, param) in params {
+            local_ctx.names.insert(
+                param.name.clone(),
+                Name {
+                    ty: param.ty.clone(),
+                },
+            );
+        }
+        Ok(TypedFunctionDeclaration {
+            name: function.name.clone(),
+            ret_ty: return_type.clone(),
+            params: params.clone(),
+            fn_ty: new_type(fn_type),
+        })
+    }
+
+    fn preload_structs(&mut self, declarations: &Vec<Declaration>) -> Result<(), String> {
+        use Declaration::Struct;
+        // Load all types without fields for resolving circular dependencies
+        for decl in declarations {
+            if let Struct(structure) = decl {
+                self.ctx.types.insert(
                     structure.name.clone(),
                     new_type(Type {
                         sig: TypeSignature::Struct(None),
                     }),
                 );
             }
-            _ => (),
         }
+        Ok(())
     }
-    Ok(())
-}
 
-pub fn resolve_fn_type<'ctx>(
-    function: &FunctionDeclaration,
-    ctx: &TypeCheckContext<'ctx>,
-) -> Result<TypeRef<'ctx>, String> {
-    let mut params = HashMap::new();
-    for param in &function.params {
-        params.insert(
-            param.name.clone(),
-            FunctionParameter {
-                name: param.name.clone(),
-                param_type: ctx.get_type(param.type_name.clone())?,
-            },
-        );
-    }
-    let return_type = if let Some(return_type) = &function.return_type {
-        Some(ctx.get_type(return_type.clone())?)
-    } else {
-        None
-    };
-    Ok(new_type(Type {
-        sig: TypeSignature::Function(FunctionType {
+    fn typecheck_fn_def(
+        &'tc self,
+        function: &'tc FunctionDefinition,
+        mut local_ctx: LocalTypecheckContext<'tc>,
+    ) -> Result<TypedFunctionDefinition<'tc>, String> {
+        use TypeSignature::*;
+        let fn_type = self.resolve_fn_def_type(function)?;
+        let Function(FunctionType {
             return_type,
             params,
-        }),
-    }))
-}
+        }) = &fn_type.sig else {
+            return Err(format!(
+                "Expected function type, found {:?}",
+                fn_type.sig
+            ));
+        };
+        local_ctx.return_type = return_type.clone();
+        for (_, param) in params {
+            local_ctx.names.insert(
+                param.name.clone(),
+                Name {
+                    ty: param.ty.clone(),
+                },
+            );
+        }
+        let body = self.typecheck_block(&function.body, local_ctx.clone())?;
+        Ok(TypedFunctionDefinition {
+            name: function.name.clone(),
+            ret_ty: return_type.clone(),
+            params: params.clone(),
+            body,
+            fn_ty: new_type(fn_type),
+        })
+    }
 
-pub fn resolve_types<'ctx>(
-    declarations: &Vec<Declaration>,
-    ctx: &mut TypeCheckContext<'ctx>,
-) -> Result<(), String> {
-    use Declaration::*;
-
-    for decl in declarations {
-        match decl {
-            Struct(structure) => {
-                resolve_struct(structure, ctx)?;
+    fn typecheck_block(
+        &'tc self,
+        body: &Block,
+        mut local_ctx: LocalTypecheckContext<'tc>,
+    ) -> Result<TypedBlock, String> {
+        let mut typed_statements = Vec::new();
+        let mut yielded = false;
+        for statement in &body.statements {
+            let typed_statement = self.typecheck_statement(statement, &mut local_ctx)?;
+            // check if yield
+            if let TypedStatement::Yield(_) = typed_statement {
+                yielded = true;
             }
-            Function(function) => {
-                ctx.names.insert(
-                    function.name.clone(),
-                    Name {
-                        var_type: resolve_fn_type(function, ctx)?,
+            typed_statements.push(typed_statement);
+        }
+
+        // make sure there's a yield if one is expected
+        if yielded && local_ctx.yield_type.is_none() {
+            return Err("Unexpected yield statement".into());
+        } else if !yielded && local_ctx.yield_type.is_some() {
+            return Err("Expected yield statement".into());
+        }
+
+        Ok(TypedBlock {
+            statements: typed_statements,
+            ty: local_ctx.yield_type.clone(),
+        })
+    }
+
+    fn typecheck_statement(
+        &'tc self,
+        statement: &ast::Statement,
+        local_ctx: &mut LocalTypecheckContext<'tc>,
+    ) -> Result<typed_ast::TypedStatement, String> {
+        use ast::Statement::*;
+        match statement {
+            Variable(var_stmt) => {
+                let VarDeclaration {
+                    name,
+                    type_name,
+                    initializer,
+                } = var_stmt;
+                let ty = self.ctx.get_type(type_name.clone())?;
+                let initializer: Option<TypedExpression> = if let Some(init) = initializer {
+                    Some(self.typecheck_expression(init, local_ctx.with_yield(ty.clone()))?)
+                } else {
+                    None
+                };
+                // Make sure initializer is of expected type
+                if let Some(init) = &initializer {
+                    if init.ty != Some(ty.clone()) {
+                        return Err(format!(
+                            "Variable init is not of expected type: Expected {:?}, found {:?}",
+                            ty, init.ty
+                        ));
+                    }
+                }
+                local_ctx
+                    .names
+                    .insert(name.clone(), Name { ty: ty.clone() });
+                Ok(typed_ast::TypedStatement::Variable(
+                    typed_ast::TypedVarDeclaration {
+                        name: name.clone(),
+                        ty,
+                        initializer,
                     },
-                );
+                ))
             }
-            _ => (),
+            Expression(expr_stmt) => {
+                let expr = self.typecheck_expression(expr_stmt, local_ctx.clone())?;
+                Ok(typed_ast::TypedStatement::Expression(expr))
+            }
+            Loop(loop_stmt) => {
+                let body = self.typecheck_block(&loop_stmt.body, local_ctx.clone())?;
+                Ok(typed_ast::TypedStatement::Loop(
+                    typed_ast::TypedLoopStatement { body },
+                ))
+            }
+            Return(ret_stmt) => {
+                let (ret_val, ret_ty) = if let Some(ret_val) = &ret_stmt.value {
+                    let expr = self.typecheck_expression(ret_val, local_ctx.clone())?;
+                    let ty = expr.ty.clone();
+                    (Some(expr), ty)
+                } else {
+                    (None, None)
+                };
+
+                if ret_ty != local_ctx.return_type {
+                    return Err(format!(
+                        "Expected return type {:?}, found {:?}",
+                        local_ctx.return_type, ret_ty
+                    ));
+                }
+                Ok(typed_ast::TypedStatement::Return(TypedReturnStatement {
+                    value: ret_val,
+                }))
+            }
+            Yield(yield_stmt) => {
+                let expr = self.typecheck_expression(&yield_stmt.value, local_ctx.clone())?;
+                let ty = expr.ty.clone();
+                if ty != local_ctx.yield_type {
+                    return Err(format!(
+                        "Expected yield type {:?}, found {:?}",
+                        local_ctx.yield_type, expr.ty
+                    ));
+                }
+                Ok(typed_ast::TypedStatement::Yield(TypedYieldStatement {
+                    value: expr,
+                }))
+            }
+            Continue => {
+                if !local_ctx.in_loop {
+                    return Err("Continue statement outside of loop".to_string());
+                }
+                Ok(typed_ast::TypedStatement::Continue)
+            }
+            Break => {
+                if !local_ctx.in_loop {
+                    return Err("Break statement outside of loop".to_string());
+                }
+                Ok(typed_ast::TypedStatement::Break)
+            }
         }
     }
 
-    Ok(())
-}
+    fn typecheck_expression(
+        &'tc self,
+        expr: &Expression,
+        local_ctx: LocalTypecheckContext<'tc>,
+    ) -> Result<TypedExpression<'tc>, String> {
+        match expr {
+            Expression::BinaryOp { left, right, op } => {
+                self.typecheck_binary_op(left, right, op, local_ctx)
+            }
+            Expression::LogicalOp { left, right, op } => {
+                self.typecheck_logical_op(left, right, op, local_ctx)
+            }
+            Expression::UnaryOp { expr, op } => self.typecheck_unary_op(expr, op, local_ctx),
+            Expression::Identifier { name } => {
+                let var = local_ctx
+                    .names
+                    .get(name)
+                    .ok_or_else(|| format!("Identifier {} not found in local context", name))?;
+                Ok(TypedExpression {
+                    ty: Some(var.ty.clone()),
+                    expr: TypedExpressionData::Identifier { name: name.clone() },
+                })
+            }
+            Expression::Literal { literal } => {
+                let lit: TypedLiteral = self.typecheck_literal(literal, &local_ctx)?;
+                Ok(TypedExpression {
+                    ty: Some(lit.ty.clone()),
+                    expr: TypedExpressionData::Literal { literal: lit },
+                })
+            }
+            Expression::If { expr } => {
+                let bool_type = self.ctx.get_type("bool".to_string())?;
+                let cond = self.typecheck_expression(&expr.condition, local_ctx.clone())?;
+                if cond.ty != Some(bool_type) {
+                    return Err(format!(
+                        "Invalid condition type: Expected type bool, found {:?} in if condition",
+                        cond.ty
+                    ));
+                }
+                let then = self.typecheck_expression(&expr.body, local_ctx.clone())?;
 
-pub fn resolve_struct<'ctx>(
-    structure: &StructDeclaration,
-    ctx: &mut TypeCheckContext<'ctx>,
-) -> Result<(), String> {
-    let mut fields = HashMap::new();
-    for field in &structure.fields {
-        let Ok(type_val) = ctx.get_type(field.type_name.clone()) else {
+                let otherwise = match *expr.else_body.clone() {
+                    Some(body) => Some(self.typecheck_expression(&body, local_ctx.clone())?),
+                    None => None,
+                };
+                if let Some(otherwise) = &otherwise {
+                    if otherwise.ty != then.ty {
+                        return Err(format!(
+                            "If branch result types don't match: {:?} and {:?}",
+                            then.ty, otherwise.ty
+                        ));
+                    }
+                }
+                let ty = then.ty.clone();
+
+                let yield_ty = match &then {
+                    TypedExpression { expr, ty } => {
+                        if let TypedExpressionData::Block { block } = expr {
+                            if let Some(yield_ty) = &block.ty {
+                                Some(yield_ty.clone())
+                            } else {
+                                None
+                            }
+                        } else {
+                            ty.clone()
+                        }
+                    }
+                };
+
+                // check if yield type is expected
+                if let Some(yield_ty) = &yield_ty {
+                    if let Some(expected_yield_ty) = &local_ctx.yield_type {
+                        if *yield_ty != *expected_yield_ty {
+                            return Err(format!(
+                                "Expected yield type {:?}, found {:?}",
+                                expected_yield_ty, yield_ty
+                            ));
+                        }
+                    }
+                }
+
+                Ok(TypedExpression {
+                    ty: ty.clone(),
+                    expr: TypedExpressionData::If {
+                        expr: TypedIfExpression {
+                            condition: Box::from(cond),
+                            body: Box::from(then),
+                            else_body: Box::from(otherwise),
+                            yield_ty,
+                        },
+                    },
+                })
+            }
+            Expression::Block { block } => {
+                let block = self.typecheck_block(block, local_ctx.clone())?;
+                Ok(TypedExpression {
+                    ty: block.ty.clone(),
+                    expr: TypedExpressionData::Block { block },
+                })
+            }
+            Expression::VarAssignment { var_assign } => {
+                let var_name = match &*var_assign.left {
+                    Expression::Identifier { name } => name,
+                    _ => return Err("Expected identifier on left side of assignment".to_string()),
+                };
+                let var = local_ctx
+                    .names
+                    .get(var_name)
+                    .ok_or_else(|| format!("Identifier {} not found in local context", var_name))?;
+                let right = self.typecheck_expression(&var_assign.right, local_ctx.clone())?;
+                if right.ty != Some(var.ty.clone()) {
+                    return Err(format!(
+                        "Invalid assignment: Expected type {:?}, found {:?} in assignment",
+                        var.ty, right.ty
+                    ));
+                }
+                Ok(TypedExpression {
+                    ty: Some(var.ty.clone()),
+                    expr: TypedExpressionData::VarAssignment {
+                        var_assign: TypedVarAssignment {
+                            left: Box::from(TypedExpression {
+                                ty: Some(var.ty.clone()),
+                                expr: TypedExpressionData::Identifier {
+                                    name: var_name.clone(),
+                                },
+                            }),
+                            right: Box::from(right),
+                            operator: var_assign.operator.clone(),
+                        },
+                    },
+                })
+            }
+            Expression::FnCall { fn_call } => self.typecheck_fn_call(fn_call, local_ctx),
+            Expression::MemberAccess { member_access } => {
+                self.typecheck_member_access(member_access, local_ctx)
+            }
+            Expression::StructInitializer { struct_init } => {
+                self.typecheck_struct_init(struct_init, local_ctx)
+            }
+        }
+    }
+
+    fn typecheck_literal(
+        &'tc self,
+        literal: &Literal,
+        local_ctx: &LocalTypecheckContext<'tc>,
+    ) -> Result<TypedLiteral, String> {
+        match literal {
+            Literal::Str(s) => Ok(TypedLiteral {
+                ty: self.ctx.get_type("str".to_string())?,
+                literal: Literal::Str(s.clone()),
+            }),
+            Literal::Int(i) => match &local_ctx.yield_type {
+                Some(t) => {
+                    if *t == self.ctx.get_type("i32".into())? {
+                        Ok(TypedLiteral {
+                            ty: t.clone(),
+                            literal: Literal::Int(*i),
+                        })
+                    } else if *t == self.ctx.get_type("i64".into())? {
+                        Ok(TypedLiteral {
+                            ty: t.clone(),
+                            literal: Literal::Int(*i),
+                        })
+                    } else {
+                        Err(format!(
+                            "Invalid int literal: Expected type {:?}, found {:?}",
+                            local_ctx.yield_type, *t
+                        ))
+                    }
+                }
+                None => return Err("Cannot infer type of literal".to_string()),
+            },
+            Literal::Float(f) => match &local_ctx.yield_type {
+                Some(t) => {
+                    if *t == self.ctx.get_type("f32".into())? {
+                        Ok(TypedLiteral {
+                            ty: t.clone(),
+                            literal: Literal::Float(*f),
+                        })
+                    } else if *t == self.ctx.get_type("f64".into())? {
+                        Ok(TypedLiteral {
+                            ty: t.clone(),
+                            literal: Literal::Float(*f),
+                        })
+                    } else {
+                        Err(format!(
+                            "Invalid float literal: Expected type {:?}, found {:?}",
+                            local_ctx.yield_type, t
+                        ))
+                    }
+                }
+                None => return Err("Cannot infer type of literal".to_string()),
+            },
+            Literal::Char(c) => {
+                if local_ctx.yield_type == Some(self.ctx.get_type("char".into())?) {
+                    Ok(TypedLiteral {
+                        ty: self.ctx.get_type("char".into())?,
+                        literal: Literal::Char(*c),
+                    })
+                } else {
+                    Err(format!(
+                        "Invalid char literal: Expected type {:?}, found {:?}",
+                        local_ctx.yield_type,
+                        self.ctx.get_type("char".into())?
+                    ))
+                }
+            }
+            Literal::Bool(b) => {
+                if local_ctx.yield_type == Some(self.ctx.get_type("bool".into())?) {
+                    Ok(TypedLiteral {
+                        ty: self.ctx.get_type("bool".into())?,
+                        literal: Literal::Bool(*b),
+                    })
+                } else {
+                    Err(format!(
+                        "Invalid bool literal: Expected type {:?}, found {:?}",
+                        local_ctx.yield_type,
+                        self.ctx.get_type("bool".into())?
+                    ))
+                }
+            }
+        }
+    }
+
+    fn typecheck_struct_decl(
+        &self,
+        structure: &StructDeclaration,
+    ) -> Result<TypedStructDeclaration<'tc>, String> {
+        let mut fields = HashMap::new();
+        for field in &structure.fields {
+            let Ok(type_val) = self.ctx.get_type(field.type_name.clone()) else {
             return Err(format!("{} is not a valid type", field.type_name));
         };
 
-        fields.insert(
-            field.name.clone(),
-            StructField {
-                name: field.name.clone(),
-                field_type: type_val.clone(),
-            },
-        );
-    }
-    let Ok(type_ref) = ctx.get_type(structure.name.clone()) else {
-        return Err("".into())
-    };
-    *type_ref.borrow_mut() = Type::new(TypeSignature::Struct(Some(StructType {
-        name: structure.name.clone(),
-        fields,
-    })));
-    Ok(())
-}
-
-pub fn typecheck_module<'ctx>(module: &ast::Module) -> Result<TypeCheckContext<'ctx>, String> {
-    let mut ctx = load_module_ctx(&module)?;
-
-    let declarations = module.body.clone();
-
-    preload_types(&declarations, &mut ctx)?;
-    resolve_types(&declarations, &mut ctx)?;
-    typecheck_functions(&declarations, ctx.clone())?;
-
-    Ok(ctx)
-}
-
-fn typecheck_functions<'ctx>(
-    declarations: &[Declaration],
-    ctx: TypeCheckContext<'ctx>,
-) -> Result<(), String> {
-    use Declaration::*;
-
-    for decl in declarations {
-        if let Function(function) = decl {
-            typecheck_function(function, &ctx)?;
-        }
-    }
-
-    Ok(())
-}
-
-fn typecheck_function<'ctx>(
-    function: &FunctionDeclaration,
-    ctx: &TypeCheckContext<'ctx>,
-) -> Result<(), String> {
-    let fn_type = if let Some(t) = ctx.names.get(&function.name) {
-        t.var_type.clone()
-    } else {
-        return Err(format!("{} is not a valid function", function.name));
-    };
-    let mut function_ctx = ctx.clone().enter_fn(fn_type);
-    for param in &function.params {
-        function_ctx.names.insert(
-            param.name.clone(),
-            Name {
-                var_type: ctx.get_type(param.type_name.clone())?,
-            },
-        );
-    }
-    typecheck_block(&function.body, function_ctx)?;
-    Ok(())
-}
-
-fn typecheck_block<'ctx>(
-    body: &Block,
-    function_ctx: TypeCheckContext<'ctx>,
-) -> Result<Option<TypeRef<'ctx>>, String> {
-    let mut ctx = function_ctx;
-    let mut yield_type = None;
-    for stmt in &body.statements {
-        if let Some(t) = typecheck_statement(stmt, &mut ctx)? {
-            if let Some(yield_type) = yield_type.clone() {
-                if yield_type != t {
-                    return Err("yield type mismatch".into());
-                }
-            } else {
-                yield_type = Some(t);
-            }
-        }
-    }
-    Ok(yield_type)
-}
-
-impl<'t> std::fmt::Display for Type<'t> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.sig)
-    }
-}
-
-impl<'t> std::fmt::Display for TypeSignature<'t> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TypeSignature::Primitive(prim) => match prim {
-                PrimitiveType::I32 => write!(f, "i32"),
-                PrimitiveType::I64 => write!(f, "i64"),
-                PrimitiveType::F32 => write!(f, "f32"),
-                PrimitiveType::F64 => write!(f, "f64"),
-                PrimitiveType::Bool => write!(f, "bool"),
-                PrimitiveType::Char => write!(f, "char"),
-                _ => write!(f, "unknown"),
-            },
-            TypeSignature::Struct(structure) => {
-                if let Some(structure) = structure {
-                    write!(f, "{}", structure.name)
-                } else {
-                    write!(f, "<unknown>")
-                }
-            }
-            TypeSignature::Function(function) => {
-                write!(f, "fn(")?;
-                for (i, (name, param)) in function.params.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}: {}", param.name, param.param_type.borrow_mut())?;
-                }
-                write!(f, ")")?;
-                if let Some(return_type) = &function.return_type {
-                    write!(f, " -> {}", *return_type.borrow_mut())?;
-                }
-                Ok(())
-            }
-            TypeSignature::Empty => write!(f, "()"),
-        }
-    }
-}
-
-fn typecheck_statement<'ctx>(
-    stmt: &ast::Statement,
-    ctx: &mut TypeCheckContext<'ctx>,
-) -> Result<Option<TypeRef<'ctx>>, String> {
-    use ast::Statement::*;
-    match stmt {
-        Variable(var_stmt) => {
-            let var_type = ctx.get_type(var_stmt.type_name.clone())?;
-            ctx.names.insert(
-                var_stmt.name.clone(),
-                Name {
-                    var_type: var_type.clone(),
+            fields.insert(
+                field.name.clone(),
+                TypedStructField {
+                    name: field.name.clone(),
+                    ty: type_val.clone(),
+                    idx: field.idx,
                 },
             );
-            if let Some(expr) = &var_stmt.initializer {
-                let expr_type = typecheck_expression(expr, ctx.allow_yield(var_type.clone()))?;
-                if expr_type != var_type {
+        }
+        let Ok(type_ref) = self.ctx.get_type(structure.name.clone()) else {
+            return Err("".into())
+        };
+        *type_ref.borrow_mut() = Type::new(TypeSignature::Struct(Some(StructType {
+            name: structure.name.clone(),
+            fields: fields.clone(),
+        })));
+        Ok(TypedStructDeclaration {
+            name: structure.name.clone(),
+            fields: fields.values().map(|field| field.clone()).collect(),
+            ty: type_ref,
+        })
+    }
+
+    fn typecheck_binary_op(
+        &'tc self,
+        left: &Expression,
+        right: &Expression,
+        op: &Operator,
+        local_ctx: LocalTypecheckContext<'tc>,
+    ) -> Result<TypedExpression<'tc>, String> {
+        let left_type = self.typecheck_expression(left, local_ctx.clone())?;
+        let right_type = self.typecheck_expression(right, local_ctx.clone())?;
+        use Operator::*;
+        let expr_ty = match op {
+            Plus | Minus | Times | Divide => {
+                if left_type.ty != right_type.ty {
                     return Err(format!(
-                        "Cannot assign {} to {}",
-                        (*expr_type).borrow(),
-                        *var_type.borrow_mut()
+                        "Cannot perform operation {} on {:?} and {:?}",
+                        op, left_type.ty, right_type.ty
                     ));
                 }
-            };
-        }
-        Expression(expr) => {
-            typecheck_expression(expr, ctx)?;
-        }
-        Loop(loop_stmt) => typecheck_loop(loop_stmt, ctx.clone())?,
-        Return(ret_stmt) => typecheck_return(ret_stmt, ctx.clone())?,
-        Yield(yield_stmt) => return Ok(Some(typecheck_yield(yield_stmt, ctx.clone())?)),
-        Continue => {}
-        Break => {}
-        other => {}
-    }
-    Ok(None)
-}
-
-fn typecheck_loop<'ctx>(
-    loop_stmt: &ast::LoopStatement,
-    ctx: TypeCheckContext<'ctx>,
-) -> Result<(), String> {
-    typecheck_block(&loop_stmt.body, ctx)?;
-    Ok(())
-}
-
-fn typecheck_yield<'ctx>(
-    yield_stmt: &ast::YieldStatement,
-    mut ctx: TypeCheckContext<'ctx>,
-) -> Result<TypeRef<'ctx>, String> {
-    if let Some(yield_type) = ctx.yield_type.clone() {
-        let yield_val_type =
-            typecheck_expression(&yield_stmt.value, ctx.allow_yield(yield_type.clone()))?;
-        if yield_val_type != yield_type {
-            return Err(format!(
-                "Cannot yield {}, expected type {}",
-                *yield_val_type.borrow_mut(),
-                *yield_type.borrow_mut()
-            ));
-        }
-        Ok(yield_type)
-    } else {
-        return Err("Cannot yield in this context".into());
-    }
-}
-
-fn typecheck_return<'ctx>(
-    ret_stmt: &ast::ReturnStatement,
-    mut ctx: TypeCheckContext<'ctx>,
-) -> Result<(), String> {
-    if let Some(t) = ctx.return_type.clone() {
-        if let Some(expr) = &ret_stmt.value {
-            let expr_type = typecheck_expression(expr, ctx.allow_yield(t.clone()))?;
-            if expr_type != t {
-                return Err(format!(
-                    "Cannot return {} from {}",
-                    (*expr_type).borrow(),
-                    *t.borrow_mut()
-                ));
+                &left_type.ty
             }
-        } else {
-            return Err("Cannot return void from non-void function".into());
-        }
-    } else {
-        if let Some(_) = &ret_stmt.value {
-            return Err("Cannot return from void function".into());
-        }
-    }
-    Ok(())
-}
-
-fn typecheck_expression<'ctx>(
-    expr: &Expression,
-    ctx: &mut TypeCheckContext<'ctx>,
-) -> Result<TypeRef<'ctx>, String> {
-    use Expression::*;
-    match expr {
-        BinaryOp { left, right, op } => typecheck_binary_op(left, right, op, ctx),
-        LogicalOp { left, right, op } => typecheck_logical_op(left, right, op, ctx),
-        UnaryOp { expr, op } => typecheck_unary_op(expr, op, ctx),
-        Identifier { name } => typecheck_identifier(name, ctx),
-        Literal { literal } => typecheck_literal(literal, ctx),
-        If { expr } => todo!(),
-        Block { block } => match typecheck_block(block, ctx.clone()) {
-            Ok(t) => {
-                if let Some(t) = t {
-                    Ok(t)
-                } else {
-                    Ok(new_type(Type::empty()))
+            Equals | NotEquals | LessThan | GreaterThan | LessThanEquals | GreaterThanEquals => {
+                if left_type != right_type {
+                    return Err(format!(
+                        "Cannot perform operation {} on {:?} and {:?}",
+                        op, left_type.ty, right_type.ty
+                    ));
                 }
+
+                &left_type.ty
             }
-            Err(e) => Err(e),
-        },
-        VarAssignment { var_assign } => typecheck_var_assignment(var_assign, ctx),
-        FnCall { fn_call } => todo!(), //typecheck_fn_call(fn_call, ctx),
-        MemberAccess { member_access } => todo!(),
-        StructInitializer { struct_init } => typecheck_struct_initializer(struct_init, ctx),
-    }
-}
-
-fn typecheck_struct_initializer<'ctx>(
-    struct_init: &ast::StructInitializer,
-    ctx: &mut TypeCheckContext<'ctx>,
-) -> Result<TypeRef<'ctx>, String> {
-    let struct_ptr = ctx.get_type(struct_init.struct_name.clone())?;
-    let t = struct_ptr.borrow_mut();
-    if let TypeSignature::Struct(Some(struct_type)) = t.sig.clone() {
-        let mut field_types = Vec::new();
-        for field in &struct_type.fields {
-            let field_type = field.1.field_type.clone();
-            field_types.push(field_type);
-        }
-        for (i, init_field) in struct_init.fields.iter().enumerate() {
-            let Some(field_type) = field_types.get(i) else {
-                return Err(format!(
-                    "Too many fields in struct initializer for {}",
-                    struct_init.struct_name
-                ));
-            };
-            let expr_type =
-                typecheck_expression(&init_field.value, ctx.allow_yield(field_type.clone()))?;
-            if expr_type != *field_type {
-                return Err(format!(
-                    "Cannot assign {} to {}",
-                    *expr_type.borrow_mut(),
-                    *field_type.borrow_mut()
-                ));
+            And | Or => {
+                if left_type != right_type {
+                    return Err(format!(
+                        "Cannot perform operation {} on {:?} and {:?}",
+                        op, left_type.ty, right_type.ty
+                    ));
+                }
+                &left_type.ty
             }
-        }
-        Ok(struct_ptr.clone())
-    } else {
-        Err(format!(
-            "{} is not a struct",
-            struct_init.struct_name.clone()
-        ))
-    }
-}
-
-/* fn typecheck_fn_call<'ctx>(
-    fn_call: &ast::FunctionCall,
-    ctx: &mut TypeCheckContext<'ctx>,
-) -> Result<TypeRef<'ctx>, String> {
-    let ast::Expression::Identifier { name } = *fn_call.callee else {
-        return Err("Cannot call non-function".into());
-    };
-    let callee = ctx
-        .names
-        .get(&name)
-        .ok_or(format!("Unknown function {}", name))?;
-    let callee_type = callee.var_type.clone();
-    let callee_type = callee_type.borrow_mut();
-    let callee_type = match &*callee_type {
-        TypeSignature(f) => f,
-        _ => return Err("Cannot call non-function".into()),
-    };
-} */
-
-fn typecheck_var_assignment<'ctx>(
-    var_assign: &ast::VarAssignment,
-    ctx: &mut TypeCheckContext<'ctx>,
-) -> Result<TypeRef<'ctx>, String> {
-    let left_type = typecheck_expression(&*var_assign.left, ctx)?;
-    let right_type = typecheck_expression(&*var_assign.right, ctx)?;
-    if left_type != right_type {
-        return Err(format!(
-            "Cannot assign {} to {}",
-            *right_type.borrow_mut(),
-            *left_type.borrow_mut()
-        ));
-    }
-    Ok(left_type)
-}
-
-fn typecheck_literal<'ctx>(
-    literal: &crate::tokenizer::Literal,
-    ctx: &mut TypeCheckContext<'ctx>,
-) -> Result<TypeRef<'ctx>, String> {
-    match literal {
-        crate::tokenizer::Literal::String(_s) => Ok(ctx.get_type("string".into())?),
-        crate::tokenizer::Literal::Int(_i) => {
-            // determine if i32 or i64
-            if let Some(t) = ctx.yield_type.clone() {
-                match t.borrow_mut().clone().sig {
-                    TypeSignature::Primitive(PrimitiveType::I32) => {
-                        return Ok(ctx.get_type("i32".into())?)
-                    }
-                    TypeSignature::Primitive(PrimitiveType::I64) => {
-                        return Ok(ctx.get_type("i64".into())?)
-                    }
-                    _ => {}
+            /* Assign(_op) => {
+                if left_type != right_type {
+                    return Err(format!(
+                        "Cannot assign {:?} to {:?}",
+                        right_type.ty, left_type.ty
+                    ));
                 }
-            } else if let Some(ret_type) = ctx.return_type.clone() {
-                match ret_type.borrow_mut().clone().sig {
-                    TypeSignature::Primitive(PrimitiveType::I32) => {
-                        return Ok(ctx.get_type("i32".into())?)
-                    }
-                    TypeSignature::Primitive(PrimitiveType::I64) => {
-                        return Ok(ctx.get_type("i64".into())?)
-                    }
-                    _ => {}
-                }
-            };
-            Ok(ctx.get_type("i64".into())?)
-        }
-        crate::tokenizer::Literal::Float(_f) => {
-            // determine if f32 or f64
-            if let Some(t) = ctx.yield_type.clone() {
-                match t.borrow_mut().clone().sig {
-                    TypeSignature::Primitive(PrimitiveType::F32) => {
-                        return Ok(ctx.get_type("f32".into())?)
-                    }
-                    TypeSignature::Primitive(PrimitiveType::F64) => {
-                        return Ok(ctx.get_type("f64".into())?)
-                    }
-                    _ => {}
-                }
-            } else if let Some(ret_type) = ctx.return_type.clone() {
-                match ret_type.borrow_mut().clone().sig {
-                    TypeSignature::Primitive(PrimitiveType::F32) => {
-                        return Ok(ctx.get_type("f32".into())?)
-                    }
-                    TypeSignature::Primitive(PrimitiveType::F64) => {
-                        return Ok(ctx.get_type("f64".into())?)
-                    }
-                    _ => {}
-                }
-            };
-            Ok(ctx.get_type("f64".into())?)
-        }
-        crate::tokenizer::Literal::Char(_c) => Ok(ctx.get_type("char".into())?),
-        crate::tokenizer::Literal::Bool(_b) => Ok(ctx.get_type("bool".into())?),
-    }
-}
-
-fn typecheck_identifier<'ctx>(
-    name: &str,
-    ctx: &mut TypeCheckContext<'ctx>,
-) -> Result<TypeRef<'ctx>, String> {
-    if let Some(name) = ctx.names.get(name) {
-        Ok(name.var_type.clone())
-    } else {
-        Err(format!("Unknown identifier {}", name))
-    }
-}
-
-fn typecheck_unary_op<'ctx>(
-    expr: &Expression,
-    op: &Operator,
-    ctx: &mut TypeCheckContext<'ctx>,
-) -> Result<TypeRef<'ctx>, String> {
-    let expr_type = typecheck_expression(expr, ctx)?;
-    match op {
-        Operator::Not => {
-            if expr_type != ctx.get_type("bool".into())? {
-                return Err(format!("Cannot apply ! to {}", *expr_type.borrow_mut()));
-            }
-        }
-        Operator::Minus => {
-            /* if expr_type != Type::Primitive(PrimitiveType::I32) {
-                return Err(format!("Cannot apply - to {}", *expr_type.borrow_mut()));
+                Ok(left_type)
             } */
+            Modulo | Power | Not | BitwiseAnd | BitwiseOr | BitwiseXor | BitwiseNot
+            | BitwiseLeftShift | BitwiseRightShift => {
+                if left_type != right_type {
+                    return Err(format!(
+                        "Cannot perform operation {} on {:?} and {:?}",
+                        op, left_type, right_type
+                    ));
+                }
+                &left_type.ty
+            }
+            _ => return Err(format!("Cannot perform operation {}", op)),
+        };
+        Ok(TypedExpression {
+            ty: expr_ty.clone(),
+            expr: TypedExpressionData::BinaryOp {
+                left: Box::from(left_type),
+                right: Box::from(right_type),
+                op: *op,
+            },
+        })
+    }
+
+    fn resolve_fn_decl_type(
+        &self,
+        function: &FunctionDeclaration,
+    ) -> Result<type_sig::Type<'tc>, String> {
+        let mut params = HashMap::new();
+        for param in &function.params {
+            params.insert(
+                param.name.clone(),
+                TypedFunctionParameter {
+                    name: param.name.clone(),
+                    ty: self.ctx.get_type(param.type_name.clone())?,
+                    idx: param.idx,
+                },
+            );
         }
-        _ => {
+        let return_type = if let Some(return_type) = &function.return_type {
+            Some(self.ctx.get_type(return_type.clone())?)
+        } else {
+            None
+        };
+        Ok(Type {
+            sig: TypeSignature::Function(FunctionType {
+                return_type,
+                params,
+            }),
+        })
+    }
+
+    fn resolve_fn_def_type(
+        &self,
+        function: &FunctionDefinition,
+    ) -> Result<type_sig::Type<'tc>, String> {
+        let mut params = HashMap::new();
+        for param in &function.params {
+            params.insert(
+                param.name.clone(),
+                TypedFunctionParameter {
+                    name: param.name.clone(),
+                    ty: self.ctx.get_type(param.type_name.clone())?,
+                    idx: param.idx,
+                },
+            );
+        }
+        let return_type = if let Some(return_type) = &function.return_type {
+            Some(self.ctx.get_type(return_type.clone())?)
+        } else {
+            None
+        };
+        Ok(Type {
+            sig: TypeSignature::Function(FunctionType {
+                return_type,
+                params,
+            }),
+        })
+    }
+
+    fn typecheck_fn_call(
+        &'tc self,
+        fn_call: &ast::FunctionCall,
+        local_ctx: LocalTypecheckContext<'tc>,
+    ) -> Result<TypedExpression, String> {
+        let fn_name = match *fn_call.callee.clone() {
+            Expression::Identifier { name } => name,
+            _ => return Err("Unsupported callee type".into()),
+        };
+        let fn_type = local_ctx
+            .names
+            .get(&fn_name)
+            .ok_or(format!("Function {} is not defined in this scope", fn_name))?;
+        let ret_type = match fn_type.ty.borrow_mut().sig.clone() {
+            TypeSignature::Function(FunctionType { return_type, .. }) => return_type,
+            _ => return Err(format!("{} is not a function", fn_name)),
+        };
+        let mut args = Vec::new();
+        for arg in &fn_call.args {
+            args.push(self.typecheck_expression(arg, local_ctx.clone())?);
+        }
+        let callee = self.typecheck_expression(&fn_call.callee, local_ctx.clone())?;
+        Ok(TypedExpression {
+            ty: ret_type,
+            expr: TypedExpressionData::FnCall {
+                fn_call: TypedFunctionCall {
+                    callee: Box::from(callee),
+                    args,
+                    fn_ty: fn_type.ty.clone(),
+                },
+            },
+        })
+    }
+
+    fn typecheck_logical_op(
+        &'tc self,
+        left: &Expression,
+        right: &Expression,
+        op: &Operator,
+        local_ctx: LocalTypecheckContext<'tc>,
+    ) -> Result<TypedExpression<'tc>, String> {
+        let left_type = self.typecheck_expression(left, local_ctx.clone())?;
+        let right_type = self.typecheck_expression(right, local_ctx.clone())?;
+        if left_type != right_type {
             return Err(format!(
-                "Cannot apply {} to {}",
-                op,
-                *expr_type.borrow_mut()
+                "Cannot perform operation {} on {:?} and {:?}",
+                op, left_type, right_type
             ));
         }
+        Ok(TypedExpression {
+            ty: Some(self.ctx.get_type("bool".into())?),
+            expr: TypedExpressionData::BinaryOp {
+                left: Box::from(left_type),
+                right: Box::from(right_type),
+                op: *op,
+            },
+        })
     }
-    Ok(expr_type)
-}
 
-fn typecheck_logical_op<'ctx>(
-    left: &Expression,
-    right: &Expression,
-    op: &Operator,
-    ctx: &mut TypeCheckContext<'ctx>,
-) -> Result<TypeRef<'ctx>, String> {
-    let left_type = typecheck_expression(left, ctx)?;
-    let right_type = typecheck_expression(right, ctx)?;
-    if left_type != right_type {
-        return Err(format!(
-            "Cannot apply {} to {} and {}",
-            op,
-            *left_type.borrow_mut(),
-            *right_type.borrow_mut()
-        ));
+    fn typecheck_unary_op(
+        &'tc self,
+        expr: &Expression,
+        op: &Operator,
+        local_ctx: LocalTypecheckContext<'tc>,
+    ) -> Result<TypedExpression, String> {
+        let expr_type = self.typecheck_expression(expr, local_ctx.clone())?;
+        Ok(TypedExpression {
+            ty: expr_type.ty.clone(),
+            expr: TypedExpressionData::UnaryOp {
+                expr: Box::from(expr_type),
+                op: *op,
+            },
+        })
     }
-    let bool_type = ctx.types.get("bool").unwrap().clone();
-    if left_type != bool_type {
-        return Err(format!(
-            "Cannot apply {} to {}",
-            op,
-            *left_type.borrow_mut()
-        ));
+
+    fn typecheck_struct_init(
+        &'tc self,
+        struct_init: &StructInitializer,
+        mut local_ctx: LocalTypecheckContext<'tc>,
+    ) -> Result<TypedExpression, String> {
+        let StructInitializer {
+            struct_name,
+            fields,
+        } = struct_init;
+        let struct_type = self.ctx.get_type(struct_name.clone())?;
+        let struct_sig = struct_type.sig();
+
+        let decl_fields = match &struct_sig {
+            TypeSignature::Struct(Some(structure_t)) => &structure_t.fields,
+            _ => unreachable!(),
+        };
+
+        let mut typed_fields = Vec::new();
+        for field in fields {
+            let StructInitializerField {
+                field_name,
+                value,
+                idx,
+            } = field;
+
+            let expected_field = decl_fields.get(field_name).ok_or(format!(
+                "Field {} does not exist in struct {}",
+                field_name, struct_name
+            ))?;
+            // TODO: Possible issue
+            local_ctx.yield_type = Some(expected_field.ty.clone());
+
+            let typed_value = self.typecheck_expression(value, local_ctx.clone())?;
+
+            if typed_value.ty != Some(expected_field.ty.clone()) {
+                return Err(format!(
+                    "Expected field {} to be of type {:?}, but got {:?}",
+                    field_name, expected_field.ty, typed_value.ty
+                ));
+            }
+
+            let typed_field = TypedStructInitializerField {
+                field_name: field_name.clone(),
+                value: typed_value,
+                idx: expected_field.idx,
+            };
+            typed_fields.push(typed_field);
+        }
+
+        Ok(TypedExpression {
+            ty: Some(struct_type.clone()),
+            expr: TypedExpressionData::StructInitializer {
+                struct_init: TypedStructInitializer {
+                    struct_name: struct_name.clone(),
+                    fields: typed_fields,
+                    struct_ty: struct_type,
+                },
+            },
+        })
     }
-    Ok(bool_type)
-}
 
-fn typecheck_binary_op<'ctx>(
-    left: &Expression,
-    right: &Expression,
-    op: &Operator,
-    ctx: &mut TypeCheckContext<'ctx>,
-) -> Result<TypeRef<'ctx>, String> {
-    let left_type = typecheck_expression(left, ctx)?;
-    let right_type = typecheck_expression(right, ctx)?;
-    use Operator::*;
-    match op {
-        Plus | Minus | Times | Divide => {
-            if left_type != right_type {
-                return Err(format!(
-                    "Cannot perform operation {} on {} and {}",
-                    op,
-                    *left_type.borrow_mut(),
-                    *right_type.borrow_mut()
-                ));
-            }
-            Ok(left_type)
-        }
-        Equals | NotEquals | LessThan | GreaterThan | LessThanEquals | GreaterThanEquals => {
-            if left_type != right_type {
-                return Err(format!(
-                    "Cannot perform operation {} on {} and {}",
-                    op,
-                    *left_type.borrow_mut(),
-                    *right_type.borrow_mut()
-                ));
-            }
+    fn typecheck_member_access(
+        &'tc self,
+        member_access: &ast::MemberAccess,
+        mut local_ctx: LocalTypecheckContext<'tc>,
+    ) -> Result<TypedExpression<'tc>, String> {
+        let MemberAccess {
+            object,
+            member,
+            computed,
+        } = member_access;
 
-            Ok(ctx.types.get("bool").unwrap().clone())
+        if *computed {
+            unimplemented!("Computed member access is not supported yet");
         }
-        And | Or => {
-            if left_type != right_type {
-                return Err(format!(
-                    "Cannot perform operation {} on {} and {}",
-                    op,
-                    *left_type.borrow_mut(),
-                    *right_type.borrow_mut()
-                ));
+
+        //let object_type = self.typecheck_expression(object, local_ctx.clone())?;
+        //let member_type = self.typecheck_expression(member, local_ctx)?;
+        let object = *(object.clone());
+        let member = *(member.clone());
+        let checked_object = self.typecheck_expression(&object, local_ctx.clone())?;
+        //let checked_member = self.typecheck_expression(&member, local_ctx.clone())?;
+        match object {
+            Expression::Identifier { name } => {
+                let object_reg = local_ctx
+                    .names
+                    .get(&name)
+                    .ok_or(format!("Cannot find type of object {} in this scope", name))?;
+                let object_type = object_reg.ty.clone().sig();
+
+                if let TypeSignature::Struct(Some(structure)) = object_type {
+                    if let Expression::Identifier { name } = &member {
+                        let member_type = structure.fields.get(name).ok_or(format!(
+                            "Cannot find field {} in struct {}",
+                            name, structure.name
+                        ))?;
+                        // add struct fields to local context
+                        for (field_name, field_type) in &structure.fields {
+                            local_ctx.names.insert(
+                                field_name.clone(),
+                                Name {
+                                    ty: field_type.ty.clone(),
+                                },
+                            );
+                        }
+                        let member_expr = self.typecheck_expression(&member, local_ctx)?;
+                        Ok(TypedExpression {
+                            ty: Some(member_type.ty.clone()),
+                            expr: TypedExpressionData::MemberAccess {
+                                member_access: TypedMemberAccess {
+                                    object: Box::from(checked_object),
+                                    member: Box::from(member_expr),
+                                    computed: *computed,
+                                },
+                            },
+                        })
+                    } else if let Expression::FnCall { fn_call } = member {
+                        unimplemented!("Struct member functions are not yet supported");
+                    } else {
+                        return Err(format!(
+                            "Unsupported member access expression: {:?}",
+                            member
+                        ));
+                    }
+                } else {
+                    unimplemented!()
+                }
             }
-            Ok(ctx.types.get("bool").unwrap().clone())
-        }
-        Assign(_op) => {
-            if left_type != right_type {
-                return Err(format!(
-                    "Cannot assign {} to {}",
-                    *right_type.borrow_mut(),
-                    *left_type.borrow_mut()
-                ));
-            }
-            Ok(left_type)
-        }
-        Modulo | Power | Not | BitwiseAnd | BitwiseOr | BitwiseXor | BitwiseNot
-        | BitwiseLeftShift | BitwiseRightShift => {
-            if left_type != right_type {
-                return Err(format!(
-                    "Cannot perform operation {} on {} and {}",
-                    op,
-                    *left_type.borrow_mut(),
-                    *right_type.borrow_mut()
-                ));
-            }
-            Ok(left_type)
+            Expression::FnCall { fn_call } => todo!(),
+            Expression::MemberAccess { member_access } => todo!(),
+            _ => unimplemented!("Member access on this type is not supported yet"),
         }
     }
 }

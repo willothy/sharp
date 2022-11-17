@@ -35,6 +35,31 @@ pub enum TypeSignature<'t> {
     Empty,
 }
 
+impl<'t> TypeSignature<'t> {
+    pub fn is_empty(&self) -> bool {
+        matches!(self, TypeSignature::Empty)
+    }
+
+    pub fn is_primitive(&self) -> bool {
+        matches!(self, TypeSignature::Primitive(_))
+    }
+
+    pub fn is_struct(&self) -> bool {
+        matches!(self, TypeSignature::Struct(_))
+    }
+
+    pub fn is_function(&self) -> bool {
+        matches!(self, TypeSignature::Function(_))
+    }
+
+    pub fn get_return_type(&'t self) -> Result<Option<TypeRef>, String> {
+        match self {
+            TypeSignature::Function(f) => Ok(f.return_type.clone()),
+            _ => Err(format!("Type {:?} is not a function", self)),
+        }
+    }
+}
+
 impl<'t> Hash for Type<'t> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.sig.hash(state);
@@ -74,10 +99,10 @@ impl<'t> Hash for FunctionType<'t> {
     }
 }
 
-impl<'fn_param> Hash for FunctionParameter<'fn_param> {
+impl<'fn_param> Hash for TypedFunctionParameter<'fn_param> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.name.hash(state);
-        self.param_type.borrow_mut().hash(state);
+        self.ty.borrow_mut().hash(state);
     }
 }
 
@@ -89,7 +114,7 @@ pub enum PrimitiveType {
     F64,
     Bool,
     Char,
-    String,
+    Str,
 }
 
 impl TryFrom<String> for PrimitiveType {
@@ -103,7 +128,7 @@ impl TryFrom<String> for PrimitiveType {
             "f64" => Ok(PrimitiveType::F64),
             "bool" => Ok(PrimitiveType::Bool),
             "char" => Ok(PrimitiveType::Char),
-            "string" => Ok(PrimitiveType::String),
+            "string" => Ok(PrimitiveType::Str),
             _ => Err(format!("{} is not a valid primitive type", value)),
         }
     }
@@ -112,7 +137,7 @@ impl TryFrom<String> for PrimitiveType {
 #[derive(Debug, Clone)]
 pub struct StructType<'struct_type> {
     pub name: String,
-    pub fields: HashMap<String, StructField<'struct_type>>,
+    pub fields: HashMap<String, TypedStructField<'struct_type>>,
 }
 
 impl<'struct_type> PartialEq for StructType<'struct_type> {
@@ -123,16 +148,17 @@ impl<'struct_type> PartialEq for StructType<'struct_type> {
 
 impl<'struct_type> Eq for StructType<'struct_type> {}
 
-#[derive(Debug, Clone)]
-pub struct StructField<'field> {
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypedStructField<'field> {
     pub name: String,
-    pub field_type: TypeRef<'field>,
+    pub ty: TypeRef<'field>,
+    pub idx: u32,
 }
 
 #[derive(Debug, Clone)]
 pub struct FunctionType<'fn_type> {
     pub return_type: Option<TypeRef<'fn_type>>,
-    pub params: HashMap<String, FunctionParameter<'fn_type>>,
+    pub params: HashMap<String, TypedFunctionParameter<'fn_type>>,
 }
 
 impl<'fn_type> PartialEq for FunctionType<'fn_type> {
@@ -164,12 +190,13 @@ impl<'fn_type> PartialEq for FunctionType<'fn_type> {
 impl<'fn_type> Eq for FunctionType<'fn_type> {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FunctionParameter<'fn_param> {
+pub struct TypedFunctionParameter<'fn_param> {
     pub name: String,
-    pub param_type: TypeRef<'fn_param>,
+    pub ty: TypeRef<'fn_param>,
+    pub idx: u32,
 }
 
 #[derive(Debug, Clone)]
 pub struct Name<'name> {
-    pub var_type: TypeRef<'name>,
+    pub ty: TypeRef<'name>,
 }

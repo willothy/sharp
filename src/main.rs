@@ -1,7 +1,5 @@
 // Author: Will Hopkins
 
-use std::{cell::RefCell, rc::Rc};
-
 use crate::{codegen::generator::CodeGenerator, tokenizer::Span};
 
 mod ast;
@@ -12,9 +10,16 @@ mod typechecker;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
-fn main() -> i64 {
-    let i64 a = 1;
-    return a;
+fn printf(str format) -> i32;
+
+struct Num {
+    i32 value
+}
+
+fn main() -> i32 {
+    let Num n = Num { value: 5 };
+    printf("Hello, %d!", n.value);
+    return n.value;
 }
     "#;
     let source = Span::from(source);
@@ -23,12 +28,15 @@ fn main() -> i64 {
     //println!("{:?}", remaining);
     //println!("{:#?}", tokens);
     let module = parser::parse(tokens, "main".into())?;
-    //println!("{:#?}", module);
-    let checked = typechecker::typecheck_module(&module)?;
+    println!("{:#?}", module);
+    let mut tc = typechecker::TypeChecker::new();
+    let checked = tc.typecheck_module(&module)?;
+
+    //println!("{:#?}", checked.module);
 
     let llvm_ctx = inkwell::context::Context::create();
     let generator = CodeGenerator::new(&checked, &llvm_ctx);
-    let generated_mod = generator.codegen_module(&module)?;
+    let generated_mod = generator.codegen_module()?;
 
     println!("{}", generated_mod.to_string());
     //println!("{:#?}", checked.names);

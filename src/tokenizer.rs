@@ -74,7 +74,7 @@ pub enum TokenKind {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Literal {
-    String(String),
+    Str(String),
     Int(i64),
     Float(f64),
     Char(char),
@@ -430,7 +430,7 @@ fn integer_literal(input: Span) -> IResult<Span, TokenKind> {
 
 fn string_literal(input: Span) -> IResult<Span, TokenKind> {
     let (input, (_, text, _)) = tuple((tag("\""), is_not("\""), tag("\"")))(input)?;
-    Ok((input, TokenKind::Literal(Literal::String(text.to_string()))))
+    Ok((input, TokenKind::Literal(Literal::Str(text.to_string()))))
 }
 
 fn char_literal(input: Span) -> IResult<Span, TokenKind> {

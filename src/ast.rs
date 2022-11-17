@@ -12,9 +12,18 @@ pub struct Module {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Declaration {
-    Function(FunctionDeclaration),
+    FunctionDef(FunctionDefinition),
+    FunctionDecl(FunctionDeclaration),
     Struct(StructDeclaration),
     Module(Module),
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct FunctionDefinition {
+    pub name: String,
+    pub return_type: Option<String>,
+    pub params: Vec<FunctionParameter>,
+    pub body: Block,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -22,7 +31,6 @@ pub struct FunctionDeclaration {
     pub name: String,
     pub return_type: Option<String>,
     pub params: Vec<FunctionParameter>,
-    pub body: Block,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -35,6 +43,7 @@ pub struct StructDeclaration {
 pub struct StructField {
     pub name: String,
     pub type_name: String,
+    pub idx: u32,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -47,6 +56,7 @@ pub struct StructInitializer {
 pub struct StructInitializerField {
     pub field_name: String,
     pub value: Expression,
+    pub idx: u32,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -59,6 +69,7 @@ pub struct FunctionCall {
 pub struct FunctionParameter {
     pub name: String,
     pub type_name: String,
+    pub idx: u32,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -138,8 +149,8 @@ pub struct VarDeclaration {
 #[derive(Debug, PartialEq, Clone)]
 pub struct IfExpression {
     pub condition: Box<Expression>,
-    pub body: Box<Statement>,
-    pub else_body: Box<Option<Statement>>,
+    pub body: Box<Expression>,
+    pub else_body: Box<Option<Expression>>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
