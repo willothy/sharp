@@ -7,7 +7,7 @@ use nom::{
     bytes::{complete::tag, streaming::is_not},
     character::{
         self,
-        complete::{alpha1, alphanumeric1, multispace0, space0},
+        complete::{alpha1, alphanumeric1, multispace0},
     },
     combinator::{map, recognize},
     multi::many0_count,
@@ -19,18 +19,18 @@ use nom_locate::{position, LocatedSpan};
 pub type Span<'a> = LocatedSpan<&'a str>;
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct Token {
+pub struct Token<'t> {
     pub kind: TokenKind,
-    pub position: TokenPosition,
+    pub position: Span<'t>,
 }
 
-impl Display for Token {
+impl<'t> Display for Token<'t> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?} at {}", self.kind, self.position)
     }
 }
 
-impl PartialEq<TokenKind> for Token {
+impl<'t> PartialEq<TokenKind> for Token<'t> {
     fn eq(&self, other: &TokenKind) -> bool {
         self.kind == *other
     }
@@ -49,6 +49,16 @@ impl TokenPosition {
             line: 0,
             column: 0,
             offset: 0,
+        }
+    }
+}
+
+impl From<Span<'_>> for TokenPosition {
+    fn from(span: Span<'_>) -> Self {
+        Self {
+            line: span.location_line() as usize,
+            column: span.get_column() as usize,
+            offset: span.location_offset(),
         }
     }
 }
@@ -74,11 +84,23 @@ pub enum TokenKind {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Literal {
-    Str(String),
-    Int(i64),
-    Float(f64),
-    Char(char),
-    Bool(bool),
+    Str(String, TokenPosition),
+    Int(i64, TokenPosition),
+    Float(f64, TokenPosition),
+    Char(char, TokenPosition),
+    Bool(bool, TokenPosition),
+}
+
+impl Literal {
+    pub fn position(&self) -> TokenPosition {
+        match self {
+            Literal::Str(_, p) => p.clone(),
+            Literal::Int(_, p) => p.clone(),
+            Literal::Float(_, p) => p.clone(),
+            Literal::Char(_, p) => p.clone(),
+            Literal::Bool(_, p) => p.clone(),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -95,6 +117,9 @@ pub enum Keyword {
     Struct,
     Use,
     Module,
+    Impl,
+    Self_,
+    As,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -109,9 +134,9 @@ pub enum Operator {
     Equals,
     NotEquals,
     LessThan,
-    LessThanEquals,
+    LessOrEqual,
     GreaterThan,
-    GreaterThanEquals,
+    GreaterOrEqual,
     And,
     Or,
     Not,
@@ -136,9 +161,9 @@ impl Operator {
             Operator::Equals => OperatorType::Equality,
             Operator::NotEquals => OperatorType::Equality,
             Operator::LessThan => OperatorType::Relational,
-            Operator::LessThanEquals => OperatorType::Relational,
+            Operator::LessOrEqual => OperatorType::Relational,
             Operator::GreaterThan => OperatorType::Relational,
-            Operator::GreaterThanEquals => OperatorType::Relational,
+            Operator::GreaterOrEqual => OperatorType::Relational,
             Operator::And => OperatorType::LogicalAnd,
             Operator::Or => OperatorType::LogicalOr,
             Operator::Not => OperatorType::LogicalNot,
@@ -153,7 +178,13 @@ impl Operator {
 
     pub fn is_unary(&self) -> bool {
         let t = self.op_type();
-        t == OperatorType::LogicalNot || t == OperatorType::Additive
+        if t == OperatorType::LogicalNot || t == OperatorType::Additive {
+            return true;
+        }
+        match self {
+            Operator::Plus | Operator::Minus | Operator::Not | Operator::Times => true,
+            _ => false,
+        }
     }
 }
 
@@ -198,9 +229,9 @@ impl std::fmt::Display for Operator {
             Operator::Equals => write!(f, "=="),
             Operator::NotEquals => write!(f, "!="),
             Operator::LessThan => write!(f, "<"),
-            Operator::LessThanEquals => write!(f, "<="),
+            Operator::LessOrEqual => write!(f, "<="),
             Operator::GreaterThan => write!(f, ">"),
-            Operator::GreaterThanEquals => write!(f, ">="),
+            Operator::GreaterOrEqual => write!(f, ">="),
             Operator::And => write!(f, "&&"),
             Operator::Or => write!(f, "||"),
             Operator::Not => write!(f, "!"),
@@ -237,9 +268,10 @@ pub enum Symbol {
     Comma,
     Dot,
     Arrow,
+    Ellipsis,
 }
 
-fn keyword(input: Span) -> IResult<Span, TokenKind> {
+fn keyword<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
     match alt((
         tag("let"),
         tag("if"),
@@ -253,6 +285,9 @@ fn keyword(input: Span) -> IResult<Span, TokenKind> {
         tag("fn"),
         tag("use"),
         tag("mod"),
+        tag("as"),
+        tag("self"),
+        tag("impl"),
     ))(input)
     {
         Ok((input, keyword)) => Ok((
@@ -270,6 +305,9 @@ fn keyword(input: Span) -> IResult<Span, TokenKind> {
                 "fn" => TokenKind::Keyword(Keyword::Function),
                 "use" => TokenKind::Keyword(Keyword::Use),
                 "mod" => TokenKind::Keyword(Keyword::Module),
+                "as" => TokenKind::Keyword(Keyword::As),
+                "self" => TokenKind::Keyword(Keyword::Self_),
+                "impl" => TokenKind::Keyword(Keyword::Impl),
                 _ => {
                     return Err(Err::Error(nom::error::Error::new(
                         input,
@@ -282,7 +320,7 @@ fn keyword(input: Span) -> IResult<Span, TokenKind> {
     }
 }
 
-fn ops1(input: Span) -> IResult<Span, Span> {
+fn ops1<'a>(input: Span<'a>) -> IResult<Span<'a>, Span> {
     alt((
         tag("+"),
         tag("-"),
@@ -302,7 +340,7 @@ fn ops1(input: Span) -> IResult<Span, Span> {
     ))(input)
 }
 
-fn ops2(input: Span) -> IResult<Span, Span> {
+fn ops2<'a>(input: Span<'a>) -> IResult<Span<'a>, Span> {
     alt((
         tag(">"),
         tag(">="),
@@ -319,7 +357,7 @@ fn ops2(input: Span) -> IResult<Span, Span> {
     ))(input)
 }
 
-fn operator(input: Span) -> IResult<Span, TokenKind> {
+fn operator<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
     match alt((ops1, ops2))(input) {
         Ok((input, operator)) => Ok((
             input,
@@ -333,9 +371,9 @@ fn operator(input: Span) -> IResult<Span, TokenKind> {
                 "==" => TokenKind::Operator(Operator::Equals),
                 "!=" => TokenKind::Operator(Operator::NotEquals),
                 "<" => TokenKind::Operator(Operator::LessThan),
-                "<=" => TokenKind::Operator(Operator::LessThanEquals),
+                "<=" => TokenKind::Operator(Operator::LessOrEqual),
                 ">" => TokenKind::Operator(Operator::GreaterThan),
-                ">=" => TokenKind::Operator(Operator::GreaterThanEquals),
+                ">=" => TokenKind::Operator(Operator::GreaterOrEqual),
                 "&&" => TokenKind::Operator(Operator::And),
                 "||" => TokenKind::Operator(Operator::Or),
                 "!" => TokenKind::Operator(Operator::Not),
@@ -363,7 +401,7 @@ fn operator(input: Span) -> IResult<Span, TokenKind> {
     }
 }
 
-fn symbol(input: Span) -> IResult<Span, TokenKind> {
+fn symbol<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
     match alt((
         tag("("),
         tag(")"),
@@ -373,6 +411,7 @@ fn symbol(input: Span) -> IResult<Span, TokenKind> {
         tag("]"),
         tag(";"),
         tag(":"),
+        tag("..."),
         tag(","),
         tag("."),
         tag("->"),
@@ -391,6 +430,7 @@ fn symbol(input: Span) -> IResult<Span, TokenKind> {
                 ":" => TokenKind::Symbol(Symbol::Colon),
                 "," => TokenKind::Symbol(Symbol::Comma),
                 "." => TokenKind::Symbol(Symbol::Dot),
+                "..." => TokenKind::Symbol(Symbol::Ellipsis),
                 "->" => TokenKind::Symbol(Symbol::Arrow),
                 _ => {
                     return Err(Err::Error(nom::error::Error::new(
@@ -404,7 +444,7 @@ fn symbol(input: Span) -> IResult<Span, TokenKind> {
     }
 }
 
-fn float_literal(input: Span) -> IResult<Span, TokenKind> {
+fn float_literal<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
     /* let (input, digits) = nom::character::complete::digit0(input)?;
     let (input, _) = tag(".")(input)?;
     let (input, decimal_digits) = nom::character::complete::digit1(input)?; */
@@ -417,39 +457,53 @@ fn float_literal(input: Span) -> IResult<Span, TokenKind> {
     let Ok(val) = float_literal.parse() else {
         return Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Float)));
     };
-    Ok((input, TokenKind::Literal(Literal::Float(val))))
+    Ok((input, TokenKind::Literal(Literal::Float(val, input.into()))))
 }
 
-fn integer_literal(input: Span) -> IResult<Span, TokenKind> {
+fn integer_literal<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
     let (input, digits) = nom::character::complete::digit1(input)?;
     let Ok(val) = digits.parse() else {
         return Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Digit)));
     };
-    Ok((input, TokenKind::Literal(Literal::Int(val))))
+    Ok((input, TokenKind::Literal(Literal::Int(val, input.into()))))
 }
 
-fn string_literal(input: Span) -> IResult<Span, TokenKind> {
+fn string_literal<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
     let (input, (_, text, _)) = tuple((tag("\""), is_not("\""), tag("\"")))(input)?;
-    Ok((input, TokenKind::Literal(Literal::Str(text.to_string()))))
+    let mut text = text.to_string();
+    text = text.replace("\\n", "\n"); // Newline
+    text = text.replace("\\t", "\t"); // Tab
+    text = text.replace("\\r", "\r"); // Carriage return
+    text = text.replace("\\\"", "\""); // Double quote
+    text = text.replace("\\'", "'"); // Single quote
+    text = text.replace("\\\"", "\""); // Double quote
+    Ok((input, TokenKind::Literal(Literal::Str(text, input.into()))))
 }
 
-fn char_literal(input: Span) -> IResult<Span, TokenKind> {
+fn char_literal<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
     let (input, (_, character, _)) = tuple((
         tag("\'"),
         character::complete::satisfy(|c| c != '\''),
         tag("\'"),
     ))(input)?;
-    Ok((input, TokenKind::Literal(Literal::Char(character))))
+    Ok((
+        input,
+        TokenKind::Literal(Literal::Char(character, input.into())),
+    ))
 }
 
-fn boolean_literal(input: Span) -> IResult<Span, TokenKind> {
+fn boolean_literal<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
     alt((
-        map(tag("true"), |_| TokenKind::Literal(Literal::Bool(true))),
-        map(tag("false"), |_| TokenKind::Literal(Literal::Bool(false))),
+        map(tag("true"), |_| {
+            TokenKind::Literal(Literal::Bool(true, input.into()))
+        }),
+        map(tag("false"), |_| {
+            TokenKind::Literal(Literal::Bool(false, input.into()))
+        }),
     ))(input)
 }
 
-fn identifier(input: Span) -> IResult<Span, TokenKind> {
+fn identifier<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
     /* let (input, first_char) = character::complete::alpha1(input)?;
     let (input, rest) = character::complete::alphanumeric0(input)?;
     let identifier = format!("{}{}", first_char, rest);
@@ -464,7 +518,7 @@ fn identifier(input: Span) -> IResult<Span, TokenKind> {
     Ok((input, TokenKind::Identifier(ident.to_string())))
 }
 
-fn token(input: Span) -> IResult<Span, TokenKind> {
+fn token<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
     let (input, token) = terminated(
         preceded(
             multispace0,
@@ -485,36 +539,34 @@ fn token(input: Span) -> IResult<Span, TokenKind> {
     Ok((input, token))
 }
 
-pub fn tokenize(input: Span) -> IResult<Span, Vec<Token>> {
+pub fn tokenize<'a>(input: Span<'a>) -> Option<Vec<Token>> /* IResult<Span<'a>, Vec<Token>> */ {
     let mut tokens: Vec<Token> = Vec::new();
     let mut remaining = input;
-    loop {
-        match token(remaining) {
-            Ok((new_remaining, token)) => {
-                remaining = new_remaining;
-                let pos = position(remaining)?;
-                let a = pos.0;
-                let b = pos.1;
-                tokens.push(Token {
-                    kind: token,
-                    position: TokenPosition {
-                        line: b.location_line() as usize,
-                        column: b.get_column(),
-                        offset: b.location_offset(),
-                    },
-                });
+    while let Ok((input, token)) = token(remaining) {
+        remaining = input;
+        let pos: IResult<Span<'a>, _> = position(remaining);
+        let pos = match pos {
+            Ok((pos, _)) => pos,
+            Err(_) => {
+                /* return Err(Err::Error(nom::error::Error::new(
+                    remaining,
+                    nom::error::ErrorKind::Verify,
+                ))) */
+                return None;
             }
-            Err(Err::Error(_)) => {
-                return Ok((remaining, tokens));
-            }
-            Err(Err::Failure(_)) => {
-                return Ok((remaining, tokens));
-            }
-            Err(Err::Incomplete(_)) => {
-                return Ok((remaining, tokens));
-            }
-        }
+        };
+
+        tokens.push(Token {
+            kind: token,
+            position: pos, /* TokenPosition {
+                               line: pos.location_line() as usize,
+                               column: pos.get_column(),
+                               offset: pos.location_offset(),
+                           } */
+        });
     }
+    //Ok((Span::new(""), tokens))
+    Some(tokens)
 }
 
 #[cfg(test)]
@@ -529,7 +581,7 @@ mod tests {
             TokenKind::Keyword(Keyword::Let),
             TokenKind::Identifier("x".to_string()),
             TokenKind::Operator(Operator::Assign(AssignmentOperator::Assign)),
-            TokenKind::Literal(Literal::Int(5)),
+            TokenKind::Literal(Literal::Int(5, input.clone().into())),
             TokenKind::Symbol(Symbol::Semicolon),
         ];
         let (remaining, tokens) = tokenize(input).unwrap();
@@ -545,7 +597,7 @@ mod tests {
             TokenKind::Keyword(Keyword::Let),
             TokenKind::Identifier("x".to_string()),
             TokenKind::Operator(Operator::Assign(AssignmentOperator::Assign)),
-            TokenKind::Literal(Literal::Int(5)),
+            TokenKind::Literal(Literal::Int(5, input.clone().into())),
             TokenKind::Symbol(Symbol::Semicolon),
         ];
         let (remaining, tokens) = tokenize(input).unwrap();
@@ -561,7 +613,7 @@ mod tests {
             TokenKind::Keyword(Keyword::Let),
             TokenKind::Identifier("x".to_string()),
             TokenKind::Operator(Operator::Assign(AssignmentOperator::Assign)),
-            TokenKind::Literal(Literal::Float(5.5)),
+            TokenKind::Literal(Literal::Float(5.5, input.clone().into())),
             TokenKind::Symbol(Symbol::Semicolon),
         ];
         let (remaining, tokens) = tokenize(input).unwrap();
@@ -588,12 +640,12 @@ fn main() {
             TokenKind::Keyword(Keyword::Let),
             TokenKind::Identifier("x".to_string()),
             TokenKind::Operator(Operator::Assign(AssignmentOperator::Assign)),
-            TokenKind::Literal(Literal::Int(5)),
+            TokenKind::Literal(Literal::Int(5, input.clone().into())),
             TokenKind::Symbol(Symbol::Semicolon),
             TokenKind::Keyword(Keyword::Let),
             TokenKind::Identifier("y".to_string()),
             TokenKind::Operator(Operator::Assign(AssignmentOperator::Assign)),
-            TokenKind::Literal(Literal::Int(6)),
+            TokenKind::Literal(Literal::Int(6, input.clone().into())),
             TokenKind::Symbol(Symbol::Semicolon),
             TokenKind::Keyword(Keyword::Let),
             TokenKind::Identifier("z".to_string()),
@@ -631,12 +683,12 @@ fn main() {
             TokenKind::Keyword(Keyword::Let),
             TokenKind::Identifier("x".to_string()),
             TokenKind::Operator(Operator::Assign(AssignmentOperator::Assign)),
-            TokenKind::Literal(Literal::Int(5)),
+            TokenKind::Literal(Literal::Int(5, input.clone().into())),
             TokenKind::Symbol(Symbol::Semicolon),
             TokenKind::Keyword(Keyword::Let),
             TokenKind::Identifier("y".to_string()),
             TokenKind::Operator(Operator::Assign(AssignmentOperator::Assign)),
-            TokenKind::Literal(Literal::Int(6)),
+            TokenKind::Literal(Literal::Int(6, input.clone().into())),
             TokenKind::Symbol(Symbol::Semicolon),
             TokenKind::Keyword(Keyword::If),
             TokenKind::Identifier("x".to_string()),

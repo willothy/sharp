@@ -1,0 +1,22 @@
+
+
+fn printf(str format, ...) -> i32;
+fn malloc(i64 size) -> i32*;
+
+struct test {
+    i32 a,
+    i32 b,
+    i32 c
+}
+
+fn main() -> i32 {
+    let i32 a = if 1 == 2 {
+        yield 5;
+    } else {
+        yield 2;
+    };
+
+    printf("%d\n", a);
+    return a;
+}
+

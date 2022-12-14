@@ -1,6 +1,6 @@
 // Author: Will Hopkins
 
-use std::collections::HashMap;
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::{
     ast::{
@@ -122,6 +122,7 @@ impl<'tc> TypeChecker<'tc> {
         let Function(FunctionType {
             return_type,
             params,
+            variadic
         }) = &fn_type.sig else {
             return Err(format!(
                 "Expected function type, found {:?}",
@@ -141,7 +142,8 @@ impl<'tc> TypeChecker<'tc> {
             name: function.name.clone(),
             ret_ty: return_type.clone(),
             params: params.clone(),
-            fn_ty: new_type(fn_type),
+            fn_ty: new_type(fn_type.clone()),
+            variadic: variadic.clone(),
         })
     }
 
@@ -171,6 +173,7 @@ impl<'tc> TypeChecker<'tc> {
         let Function(FunctionType {
             return_type,
             params,
+            variadic
         }) = &fn_type.sig else {
             return Err(format!(
                 "Expected function type, found {:?}",
@@ -192,7 +195,8 @@ impl<'tc> TypeChecker<'tc> {
             ret_ty: return_type.clone(),
             params: params.clone(),
             body,
-            fn_ty: new_type(fn_type),
+            fn_ty: new_type(fn_type.clone()),
+            variadic: variadic.clone(),
         })
     }
 
@@ -237,10 +241,11 @@ impl<'tc> TypeChecker<'tc> {
                     name,
                     type_name,
                     initializer,
+                    span,
                 } = var_stmt;
                 let ty = self.ctx.get_type(type_name.clone())?;
                 let initializer: Option<TypedExpression> = if let Some(init) = initializer {
-                    Some(self.typecheck_expression(init, local_ctx.with_yield(ty.clone()))?)
+                    Some(self.typecheck_expression(init, local_ctx.with_yield(Some(ty.clone())))?)
                 } else {
                     None
                 };
@@ -327,14 +332,20 @@ impl<'tc> TypeChecker<'tc> {
         local_ctx: LocalTypecheckContext<'tc>,
     ) -> Result<TypedExpression<'tc>, String> {
         match expr {
-            Expression::BinaryOp { left, right, op } => {
-                self.typecheck_binary_op(left, right, op, local_ctx)
-            }
-            Expression::LogicalOp { left, right, op } => {
-                self.typecheck_logical_op(left, right, op, local_ctx)
-            }
-            Expression::UnaryOp { expr, op } => self.typecheck_unary_op(expr, op, local_ctx),
-            Expression::Identifier { name } => {
+            Expression::BinaryOp {
+                left,
+                right,
+                op,
+                span,
+            } => self.typecheck_binary_op(left, right, op, local_ctx),
+            Expression::LogicalOp {
+                left,
+                right,
+                op,
+                span,
+            } => self.typecheck_logical_op(left, right, op, local_ctx),
+            Expression::UnaryOp { expr, op, span } => self.typecheck_unary_op(expr, op, local_ctx),
+            Expression::Identifier { name, span } => {
                 let var = local_ctx
                     .names
                     .get(name)
@@ -422,36 +433,108 @@ impl<'tc> TypeChecker<'tc> {
                 })
             }
             Expression::VarAssignment { var_assign } => {
-                let var_name = match &*var_assign.left {
-                    Expression::Identifier { name } => name,
-                    _ => return Err("Expected identifier on left side of assignment".to_string()),
-                };
-                let var = local_ctx
-                    .names
-                    .get(var_name)
-                    .ok_or_else(|| format!("Identifier {} not found in local context", var_name))?;
-                let right = self.typecheck_expression(&var_assign.right, local_ctx.clone())?;
-                if right.ty != Some(var.ty.clone()) {
-                    return Err(format!(
-                        "Invalid assignment: Expected type {:?}, found {:?} in assignment",
-                        var.ty, right.ty
-                    ));
-                }
-                Ok(TypedExpression {
-                    ty: Some(var.ty.clone()),
-                    expr: TypedExpressionData::VarAssignment {
-                        var_assign: TypedVarAssignment {
-                            left: Box::from(TypedExpression {
-                                ty: Some(var.ty.clone()),
-                                expr: TypedExpressionData::Identifier {
-                                    name: var_name.clone(),
+                let left = self.typecheck_expression(&*var_assign.left, local_ctx.clone())?;
+                match left.expr {
+                    TypedExpressionData::Identifier { name } => {
+                        let var = local_ctx.names.get(&name).ok_or_else(|| {
+                            format!("Identifier {} not found in local context", name)
+                        })?;
+
+                        let right = self.typecheck_expression(
+                            &var_assign.right,
+                            local_ctx.with_yield(Some(var.ty.clone())),
+                        )?;
+                        if right.ty != Some(var.ty.clone()) {
+                            return Err(format!(
+                                "Invalid assignment: Expected type {:?}, found {:?} in assignment",
+                                var.ty, right.ty
+                            ));
+                        }
+                        Ok(TypedExpression {
+                            ty: Some(var.ty.clone()),
+                            expr: TypedExpressionData::VarAssignment {
+                                var_assign: TypedVarAssignment {
+                                    left: Box::from(TypedExpression {
+                                        ty: Some(var.ty.clone()),
+                                        expr: TypedExpressionData::Identifier {
+                                            name: name.clone(),
+                                        },
+                                    }),
+                                    right: Box::from(right),
+                                    operator: var_assign.operator.clone(),
                                 },
-                            }),
-                            right: Box::from(right),
-                            operator: var_assign.operator.clone(),
-                        },
-                    },
-                })
+                            },
+                        })
+                    }
+                    TypedExpressionData::MemberAccess { member_access } => {
+                        let ty = match member_access.member.ty.clone() {
+                            Some(t) => t,
+                            None => return Err("Member access type is unknown".to_string()),
+                        };
+
+                        let right =
+                            self.typecheck_expression(&var_assign.right, local_ctx.clone())?;
+                        /* if right.ty != Some(ty.clone()) {
+                            return Err(format!(
+                                "Invalid assignment: Expected type {:?}, found {:?} in assignment",
+                                ty.clone(),
+                                right.ty
+                            ));
+                        } */
+                        Ok(TypedExpression {
+                            ty: Some(ty.clone()),
+                            expr: TypedExpressionData::VarAssignment {
+                                var_assign: TypedVarAssignment {
+                                    left: Box::from(TypedExpression {
+                                        ty: Some(ty.clone()),
+                                        expr: TypedExpressionData::MemberAccess { member_access },
+                                    }),
+                                    right: Box::from(right),
+                                    operator: var_assign.operator.clone(),
+                                },
+                            },
+                        })
+                    }
+                    TypedExpressionData::UnaryOp { expr, op } => {
+                        let ty = match expr.ty.clone() {
+                            Some(t) => t.sig().get_ptr_inner_ty(),
+                            None => return Err("Unary op type is unknown".to_string()),
+                        };
+
+                        let ty = new_type(Type { sig: ty });
+
+                        let right = self.typecheck_expression(
+                            &var_assign.right,
+                            local_ctx.with_yield(Some(ty.clone())),
+                        )?;
+                        /* if right.ty != Some(ty.clone()) {
+                            return Err(format!(
+                                "Invalid assignment: Expected type {:?}, found {:?} in assignment",
+                                ty.clone(),
+                                right.ty
+                            ));
+                        } */
+                        Ok(TypedExpression {
+                            ty: Some(ty.clone()),
+                            expr: TypedExpressionData::VarAssignment {
+                                var_assign: TypedVarAssignment {
+                                    left: Box::from(TypedExpression {
+                                        ty: Some(ty.clone()),
+                                        expr: TypedExpressionData::UnaryOp {
+                                            expr: Box::from(expr),
+                                            op,
+                                        },
+                                    }),
+                                    right: Box::from(right),
+                                    operator: var_assign.operator.clone(),
+                                },
+                            },
+                        })
+                    }
+                    other => {
+                        return Err(format!("Invalid left hand side of assignment: {:?}", other))
+                    }
+                }
             }
             Expression::FnCall { fn_call } => self.typecheck_fn_call(fn_call, local_ctx),
             Expression::MemberAccess { member_access } => {
@@ -469,42 +552,54 @@ impl<'tc> TypeChecker<'tc> {
         local_ctx: &LocalTypecheckContext<'tc>,
     ) -> Result<TypedLiteral, String> {
         match literal {
-            Literal::Str(s) => Ok(TypedLiteral {
+            Literal::Str(s, pos) => Ok(TypedLiteral {
                 ty: self.ctx.get_type("str".to_string())?,
-                literal: Literal::Str(s.clone()),
+                literal: Literal::Str(s.clone(), pos.clone()),
             }),
-            Literal::Int(i) => match &local_ctx.yield_type {
+            Literal::Int(i, pos) => match &local_ctx.yield_type {
                 Some(t) => {
                     if *t == self.ctx.get_type("i32".into())? {
                         Ok(TypedLiteral {
                             ty: t.clone(),
-                            literal: Literal::Int(*i),
+                            literal: Literal::Int(*i, pos.clone()),
                         })
                     } else if *t == self.ctx.get_type("i64".into())? {
                         Ok(TypedLiteral {
                             ty: t.clone(),
-                            literal: Literal::Int(*i),
+                            literal: Literal::Int(*i, pos.clone()),
+                        })
+                    } else if *t == self.ctx.get_type("i8".into())? {
+                        Ok(TypedLiteral {
+                            ty: t.clone(),
+                            literal: Literal::Int(*i, pos.clone()),
+                        })
+                    } else if *t == self.ctx.get_type("i16".into())? {
+                        Ok(TypedLiteral {
+                            ty: t.clone(),
+                            literal: Literal::Int(*i, pos.clone()),
                         })
                     } else {
                         Err(format!(
-                            "Invalid int literal: Expected type {:?}, found {:?}",
-                            local_ctx.yield_type, *t
+                            "Invalid int literal: Expected type {:?}, found {:?} on {}",
+                            local_ctx.yield_type,
+                            *t,
+                            literal.position()
                         ))
                     }
                 }
-                None => return Err("Cannot infer type of literal".to_string()),
+                None => return Err(format!("Cannot infer type of int literal {}", i)),
             },
-            Literal::Float(f) => match &local_ctx.yield_type {
+            Literal::Float(f, pos) => match &local_ctx.yield_type {
                 Some(t) => {
                     if *t == self.ctx.get_type("f32".into())? {
                         Ok(TypedLiteral {
                             ty: t.clone(),
-                            literal: Literal::Float(*f),
+                            literal: Literal::Float(*f, pos.clone()),
                         })
                     } else if *t == self.ctx.get_type("f64".into())? {
                         Ok(TypedLiteral {
                             ty: t.clone(),
-                            literal: Literal::Float(*f),
+                            literal: Literal::Float(*f, pos.clone()),
                         })
                     } else {
                         Err(format!(
@@ -513,13 +608,13 @@ impl<'tc> TypeChecker<'tc> {
                         ))
                     }
                 }
-                None => return Err("Cannot infer type of literal".to_string()),
+                None => return Err("Cannot infer type of float literal".to_string()),
             },
-            Literal::Char(c) => {
+            Literal::Char(c, pos) => {
                 if local_ctx.yield_type == Some(self.ctx.get_type("char".into())?) {
                     Ok(TypedLiteral {
                         ty: self.ctx.get_type("char".into())?,
-                        literal: Literal::Char(*c),
+                        literal: Literal::Char(*c, pos.clone()),
                     })
                 } else {
                     Err(format!(
@@ -529,11 +624,11 @@ impl<'tc> TypeChecker<'tc> {
                     ))
                 }
             }
-            Literal::Bool(b) => {
+            Literal::Bool(b, pos) => {
                 if local_ctx.yield_type == Some(self.ctx.get_type("bool".into())?) {
                     Ok(TypedLiteral {
                         ty: self.ctx.get_type("bool".into())?,
-                        literal: Literal::Bool(*b),
+                        literal: Literal::Bool(*b, pos.clone()),
                     })
                 } else {
                     Err(format!(
@@ -553,7 +648,7 @@ impl<'tc> TypeChecker<'tc> {
         let mut fields = HashMap::new();
         for field in &structure.fields {
             let Ok(type_val) = self.ctx.get_type(field.type_name.clone()) else {
-            return Err(format!("{} is not a valid type", field.type_name));
+            return Err(format!("{} is not a valid type 590", field.type_name));
         };
 
             fields.insert(
@@ -597,26 +692,27 @@ impl<'tc> TypeChecker<'tc> {
                         op, left_type.ty, right_type.ty
                     ));
                 }
-                &left_type.ty
+                left_type.ty.clone()
             }
-            Equals | NotEquals | LessThan | GreaterThan | LessThanEquals | GreaterThanEquals => {
-                if left_type != right_type {
+            Equals | NotEquals | LessThan | GreaterThan | LessOrEqual | GreaterOrEqual => {
+                if left_type.ty != right_type.ty {
                     return Err(format!(
-                        "Cannot perform operation {} on {:?} and {:?}",
+                        "Equality: Cannot perform operation {} on {:?} and {:?}",
                         op, left_type.ty, right_type.ty
                     ));
                 }
 
-                &left_type.ty
+                let bool = self.ctx.primitives.get("bool").cloned();
+                bool
             }
             And | Or => {
-                if left_type != right_type {
+                if left_type.ty != right_type.ty {
                     return Err(format!(
                         "Cannot perform operation {} on {:?} and {:?}",
                         op, left_type.ty, right_type.ty
                     ));
                 }
-                &left_type.ty
+                left_type.ty.clone()
             }
             /* Assign(_op) => {
                 if left_type != right_type {
@@ -629,15 +725,15 @@ impl<'tc> TypeChecker<'tc> {
             } */
             Modulo | Power | Not | BitwiseAnd | BitwiseOr | BitwiseXor | BitwiseNot
             | BitwiseLeftShift | BitwiseRightShift => {
-                if left_type != right_type {
+                if left_type.ty != right_type.ty {
                     return Err(format!(
                         "Cannot perform operation {} on {:?} and {:?}",
                         op, left_type, right_type
                     ));
                 }
-                &left_type.ty
+                left_type.ty.clone()
             }
-            _ => return Err(format!("Cannot perform operation {}", op)),
+            _ => return Err(format!("Unknown: Cannot perform operation {}", op)),
         };
         Ok(TypedExpression {
             ty: expr_ty.clone(),
@@ -669,10 +765,12 @@ impl<'tc> TypeChecker<'tc> {
         } else {
             None
         };
+
         Ok(Type {
             sig: TypeSignature::Function(FunctionType {
                 return_type,
                 params,
+                variadic: function.variadic,
             }),
         })
     }
@@ -683,11 +781,13 @@ impl<'tc> TypeChecker<'tc> {
     ) -> Result<type_sig::Type<'tc>, String> {
         let mut params = HashMap::new();
         for param in &function.params {
+            let t = self.ctx.get_type(param.type_name.clone())?;
+
             params.insert(
                 param.name.clone(),
                 TypedFunctionParameter {
                     name: param.name.clone(),
-                    ty: self.ctx.get_type(param.type_name.clone())?,
+                    ty: t,
                     idx: param.idx,
                 },
             );
@@ -701,6 +801,7 @@ impl<'tc> TypeChecker<'tc> {
             sig: TypeSignature::Function(FunctionType {
                 return_type,
                 params,
+                variadic: function.variadic,
             }),
         })
     }
@@ -711,7 +812,7 @@ impl<'tc> TypeChecker<'tc> {
         local_ctx: LocalTypecheckContext<'tc>,
     ) -> Result<TypedExpression, String> {
         let fn_name = match *fn_call.callee.clone() {
-            Expression::Identifier { name } => name,
+            Expression::Identifier { name, span } => name,
             _ => return Err("Unsupported callee type".into()),
         };
         let fn_type = local_ctx
@@ -723,8 +824,40 @@ impl<'tc> TypeChecker<'tc> {
             _ => return Err(format!("{} is not a function", fn_name)),
         };
         let mut args = Vec::new();
-        for arg in &fn_call.args {
-            args.push(self.typecheck_expression(arg, local_ctx.clone())?);
+        for (arg_idx, arg) in fn_call.args.iter().enumerate() {
+            let param_type = match fn_type.ty.sig() {
+                TypeSignature::Function(FunctionType {
+                    params, variadic, ..
+                }) => {
+                    let t = match params.iter().find(|(_, p)| p.idx as usize == arg_idx) {
+                        Some((_, t)) => Some(t.ty.clone()),
+                        None => {
+                            if arg_idx > (params.len() - 1) {
+                                if variadic {
+                                    self.typecheck_expression(
+                                        &arg.clone(),
+                                        local_ctx.with_yield(None),
+                                    )?
+                                    .ty
+                                } else {
+                                    return Err(format!(
+                                        "Function {} does not have a parameter at index {} and it's not variadic",
+                                        fn_name, arg_idx
+                                    ));
+                                }
+                            } else {
+                                return Err(format!(
+                                    "Function {} does not have a parameter at index {}",
+                                    fn_name, arg_idx
+                                ));
+                            }
+                        }
+                    };
+                    t.clone()
+                }
+                _ => return Err(format!("{} is not a function", fn_name)),
+            };
+            args.push(self.typecheck_expression(arg, local_ctx.with_yield(param_type))?);
         }
         let callee = self.typecheck_expression(&fn_call.callee, local_ctx.clone())?;
         Ok(TypedExpression {
@@ -771,8 +904,19 @@ impl<'tc> TypeChecker<'tc> {
         local_ctx: LocalTypecheckContext<'tc>,
     ) -> Result<TypedExpression, String> {
         let expr_type = self.typecheck_expression(expr, local_ctx.clone())?;
+        let Some(ty) = &expr_type.ty else {
+            return Err(format!("Cannot dereference {:?}", expr_type));
+        };
+        let mut ty = ty.sig();
+
+        if let Operator::Times = op {
+            ty = ty.get_ptr_inner_ty();
+        }
+
+        let ty = new_type(Type { sig: ty });
+
         Ok(TypedExpression {
-            ty: expr_type.ty.clone(),
+            ty: Some(ty),
             expr: TypedExpressionData::UnaryOp {
                 expr: Box::from(expr_type),
                 op: *op,
@@ -788,6 +932,7 @@ impl<'tc> TypeChecker<'tc> {
         let StructInitializer {
             struct_name,
             fields,
+            span,
         } = struct_init;
         let struct_type = self.ctx.get_type(struct_name.clone())?;
         let struct_sig = struct_type.sig();
@@ -803,6 +948,7 @@ impl<'tc> TypeChecker<'tc> {
                 field_name,
                 value,
                 idx,
+                span: field_span,
             } = field;
 
             let expected_field = decl_fields.get(field_name).ok_or(format!(
@@ -850,6 +996,7 @@ impl<'tc> TypeChecker<'tc> {
             object,
             member,
             computed,
+            span,
         } = member_access;
 
         if *computed {
@@ -862,8 +1009,9 @@ impl<'tc> TypeChecker<'tc> {
         let member = *(member.clone());
         let checked_object = self.typecheck_expression(&object, local_ctx.clone())?;
         //let checked_member = self.typecheck_expression(&member, local_ctx.clone())?;
-        match object {
-            Expression::Identifier { name } => {
+        match object.clone() {
+            Expression::Identifier { name, span } => {
+                // If the object is an identifier or function call, we can check the type of the member
                 let object_reg = local_ctx
                     .names
                     .get(&name)
@@ -871,7 +1019,65 @@ impl<'tc> TypeChecker<'tc> {
                 let object_type = object_reg.ty.clone().sig();
 
                 if let TypeSignature::Struct(Some(structure)) = object_type {
-                    if let Expression::Identifier { name } = &member {
+                    if let Expression::Identifier { name, span } = &member {
+                        let member_type = structure.fields.get(name).ok_or(format!(
+                            "Cannot find field {} in struct {}",
+                            name, structure.name
+                        ))?;
+                        // add struct fields to local context
+                        for (field_name, field_type) in &structure.fields {
+                            local_ctx.names.insert(
+                                field_name.clone(),
+                                Name {
+                                    ty: field_type.ty.clone(),
+                                },
+                            );
+                        }
+                        let member_expr = self.typecheck_expression(&member, local_ctx)?;
+                        Ok(TypedExpression {
+                            ty: Some(new_type(Type {
+                                sig: member_type.ty.sig().wrap_in_ptr(),
+                            })),
+                            expr: TypedExpressionData::MemberAccess {
+                                member_access: TypedMemberAccess {
+                                    object: Box::from(checked_object),
+                                    member: Box::from(member_expr),
+                                    computed: *computed,
+                                },
+                            },
+                        })
+                    } else if let Expression::FnCall { fn_call } = member {
+                        unimplemented!("Struct member functions are not yet supported");
+                    } else {
+                        return Err(format!(
+                            "Unsupported member access expression: {:?}",
+                            member
+                        ));
+                    }
+                } else {
+                    unimplemented!()
+                }
+            }
+            Expression::FnCall { fn_call } => todo!(),
+            Expression::MemberAccess { member_access } => {
+                // ensure object is a struct type
+                // ensure object has a member of the given name
+
+                // add struct fields to local context
+                // typecheck member expression
+                // return member expression
+                let checked_access =
+                    self.typecheck_member_access(&member_access, local_ctx.clone())?;
+
+                let Some(ty) = checked_access.ty else {
+                    return Err(format!(
+                        "Cannot access member of non-struct type {:?}",
+                        checked_access.ty
+                    ));
+                };
+                let sig = ty.sig();
+                if let TypeSignature::Struct(Some(structure)) = sig {
+                    if let Expression::Identifier { name, span } = &member {
                         let member_type = structure.fields.get(name).ok_or(format!(
                             "Cannot find field {} in struct {}",
                             name, structure.name
@@ -908,8 +1114,6 @@ impl<'tc> TypeChecker<'tc> {
                     unimplemented!()
                 }
             }
-            Expression::FnCall { fn_call } => todo!(),
-            Expression::MemberAccess { member_access } => todo!(),
             _ => unimplemented!("Member access on this type is not supported yet"),
         }
     }

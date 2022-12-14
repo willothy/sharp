@@ -1,36 +1,42 @@
 use crate::{
     ast::{
         Block, Declaration, Expression, FunctionCall, FunctionDeclaration, FunctionDefinition,
-        FunctionParameter, IfExpression, LoopStatement, MemberAccess, Module, ReturnStatement,
-        Statement, StructDeclaration, StructField, StructInitializer, StructInitializerField,
-        VarAssignment, VarDeclaration, YieldStatement,
+        FunctionParameter, IfExpression, LoopStatement, MemberAccess, Module, NodeSpan,
+        ReturnStatement, Statement, StructDeclaration, StructField, StructInitializer,
+        StructInitializerField, VarAssignment, VarDeclaration, YieldStatement,
     },
     tokenizer::{
-        AssignmentOperator, Keyword, Operator, OperatorType, Symbol, Token, TokenKind,
+        AssignmentOperator, Keyword, Operator, OperatorType, Span, Symbol, Token, TokenKind,
         TokenPosition,
     },
 };
 
-pub fn parse<'parse>(tokens: Vec<Token>, mod_name: String) -> Result<Module, String> {
-    let mut parser = Parser::new(tokens);
+pub fn parse<'parse>(
+    tokens: Vec<Token>,
+    source: String,
+    mod_name: String,
+) -> Result<Module, String> {
+    let mut parser = Parser::new(tokens, source);
     let module = parser.module(mod_name)?;
     Ok(module)
 }
 
 struct Parser<'parser> {
-    tokens: Vec<Token>,
+    source: String,
+    tokens: Vec<Token<'parser>>,
     current: usize,
     lookahead: usize,
     lifetime: std::marker::PhantomData<&'parser ()>,
 }
 
 impl<'parser> Parser<'parser> {
-    pub fn new(tokens: Vec<Token>) -> Self {
+    pub fn new(tokens: Vec<Token<'parser>>, source: String) -> Self {
         Self {
             tokens,
             current: 0,
             lookahead: 1,
             lifetime: std::marker::PhantomData,
+            source,
         }
     }
 
@@ -47,9 +53,48 @@ impl<'parser> Parser<'parser> {
 
     pub fn current_position(&self) -> Option<TokenPosition> {
         match self.tokens.get(self.current) {
-            Some(token) => Some(token.position.clone()),
+            Some(token) => Some(TokenPosition {
+                line: token.position.location_line() as usize,
+                column: token.position.get_column(),
+                offset: token.position.location_offset(),
+            }),
             None => None,
         }
+    }
+
+    pub fn span(&self) -> Result<Span, String> {
+        let Some(span) = self.tokens.get(self.current).map(|token| token.position) else {
+            return Err(format!(
+                "Expected span",
+            ));
+        };
+        Ok(span)
+    }
+
+    pub fn span_start(&self) -> Result<NodeSpan, String> {
+        let Some(span) = self.tokens.get(self.current).map(|token| token.position) else {
+            return Err(format!(
+                "Expected span",
+            ));
+        };
+        Ok(NodeSpan {
+            start: TokenPosition {
+                line: span.location_line() as usize,
+                column: span.get_column(),
+                offset: span.location_offset(),
+            },
+            end: TokenPosition::new(),
+        })
+    }
+
+    pub fn span_end(&self, mut span: NodeSpan) -> Result<NodeSpan, String> {
+        let Some(end) = self.tokens.get(if self.current == 0 {0} else {self.current-1}).map(|token| token.position) else {
+            return Err(format!(
+                "Expected span",
+            ));
+        };
+        span.end = TokenPosition::from(end);
+        Ok(span)
     }
 
     fn debug_position(&self) -> String {
@@ -87,23 +132,31 @@ impl<'parser> Parser<'parser> {
         }
     }
 
-    pub fn expect(&self, expected: &TokenKind) -> Result<(), String> {
+    pub fn expect(&self, expected: &TokenKind, file: &str, line: u32) -> Result<(), String> {
         if let Some(token) = self.current() {
             if token == *expected {
                 Ok(())
             } else {
                 Err(format!(
-                    "(expect guard) Expected {:?}, got {:?} at {}",
+                    "(expect guard) Expected {:?}, got {:?} at {} (compiler {}:{}){}",
                     expected,
                     token,
-                    self.debug_position()
+                    self.debug_position(),
+                    file,
+                    line,
+                    self.source
+                        .lines()
+                        .nth((self.current_position().unwrap().line as usize) - 1)
+                        .unwrap()
                 ))
             }
         } else {
             Err(format!(
-                "(expect guard) Expected {:?}, got EOF at {}",
+                "(expect guard) Expected {:?}, got EOF at {} (compiler {}:{})",
                 expected,
-                self.debug_position()
+                self.debug_position(),
+                file,
+                line
             ))
         }
     }
@@ -172,26 +225,46 @@ impl<'parser> Parser<'parser> {
         Ok(module)
     }
 
-    pub fn fn_params(&mut self) -> Result<Vec<FunctionParameter>, String> {
+    pub fn type_name(&mut self) -> Result<String, String> {
+        let mut type_name = if let Some(TokenKind::Identifier(type_name)) = self.current() {
+            type_name
+        } else {
+            return Err(format!(
+                "Expected identifier, got {:?} at {}",
+                self.current(),
+                self.debug_position()
+            ));
+        };
+        self.advance();
+
+        while let Some(TokenKind::Operator(Operator::Times)) = self.current() {
+            self.advance();
+            type_name = format!("*{}", type_name);
+        }
+        Ok(type_name)
+    }
+
+    pub fn fn_params(&mut self) -> Result<(Vec<FunctionParameter>, bool), String> {
         let mut params = Vec::new();
         let mut param_idx: u32 = 0;
+        let mut variadic = false;
+
         loop {
             if let Some(TokenKind::Symbol(Symbol::CloseParen)) = self.current() {
                 self.advance();
                 break;
             }
 
-            let param_type = if let Some(TokenKind::Identifier(param_type)) = self.current() {
-                param_type.clone()
-            } else {
-                return Err(format!(
-                    "Expected type name, got {:?} at {}",
-                    self.current(),
-                    self.debug_position()
-                ));
-            };
+            let span = self.span_start()?;
 
-            self.advance();
+            if let Some(TokenKind::Symbol(Symbol::Ellipsis)) = self.current() {
+                self.advance();
+                variadic = true;
+                continue;
+            }
+
+            let param_type = self.type_name()?;
+
             let param_name = if let Some(TokenKind::Identifier(param_name)) = self.current() {
                 param_name.clone()
             } else {
@@ -218,15 +291,26 @@ impl<'parser> Parser<'parser> {
                 name: param_name,
                 type_name: param_type,
                 idx: param_idx,
+                span: self.span_end(span)?,
             });
             param_idx += 1;
         }
-        Ok(params)
+        Ok((params, variadic))
     }
 
     pub fn function_sig(
         &mut self,
-    ) -> Result<(String, Vec<FunctionParameter>, Option<String>), String> {
+    ) -> Result<
+        (
+            String,
+            Vec<FunctionParameter>,
+            Option<String>,
+            bool,
+            NodeSpan,
+        ),
+        String,
+    > {
+        let span = self.span_start()?;
         self.advance(); // Skip function keyword
         let name = if let Some(TokenKind::Identifier(name)) = self.current() {
             name.clone()
@@ -239,34 +323,33 @@ impl<'parser> Parser<'parser> {
         };
 
         self.advance();
-        self.expect(&TokenKind::Symbol(Symbol::OpenParen))?;
+        self.expect(&TokenKind::Symbol(Symbol::OpenParen), file!(), line!())?;
         self.advance();
 
-        let params: Vec<FunctionParameter> = self.fn_params()?;
+        let (params, variadic): (Vec<FunctionParameter>, bool) = self.fn_params()?;
 
         let return_type = if let Some(TokenKind::Symbol(Symbol::Arrow)) = self.current() {
             self.advance();
-            if let Some(TokenKind::Identifier(return_type)) = self.current() {
-                self.advance();
-                Some(return_type.clone())
-            } else {
-                return Err(format!(
-                    "Expected type name, got {:?} at {}",
-                    self.current(),
-                    self.debug_position()
-                ));
-            }
+            Some(self.type_name()?)
         } else {
             None
         };
-        Ok((name, params, return_type))
+
+        Ok((name, params, return_type, variadic, self.span_end(span)?))
     }
 
     pub fn function_def(
         &mut self,
-        fn_sig: (String, Vec<FunctionParameter>, Option<String>),
+        fn_sig: (
+            String,
+            Vec<FunctionParameter>,
+            Option<String>,
+            bool,
+            NodeSpan,
+        ),
     ) -> Result<crate::ast::FunctionDefinition, String> {
-        let (name, params, return_type) = fn_sig;
+        let (name, params, return_type, variadic, span) = fn_sig;
+        let span = self.span_start()?;
         let body = self.block()?;
 
         Ok(FunctionDefinition {
@@ -274,10 +357,13 @@ impl<'parser> Parser<'parser> {
             return_type,
             params,
             body,
+            variadic,
+            span: self.span_end(span)?,
         })
     }
 
     pub fn struct_decl(&mut self) -> Result<StructDeclaration, String> {
+        let outer_span = self.span_start()?;
         self.eat(TokenKind::Keyword(Keyword::Struct))?;
         let name = if let Some(TokenKind::Identifier(name)) = self.advance() {
             name.clone()
@@ -297,13 +383,9 @@ impl<'parser> Parser<'parser> {
                 break;
             }
 
-            let Some(TokenKind::Identifier(type_name)) = self.advance() else {
-                return Err(format!(
-                    "Expected identifier, got {:?} at {}",
-                    self.current(),
-                    self.debug_position()
-                ));
-            };
+            let span = self.span_start()?;
+
+            let type_name = self.type_name()?;
 
             let Some(TokenKind::Identifier(field_name)) = self.advance() else {
                 return Err(format!(
@@ -317,6 +399,7 @@ impl<'parser> Parser<'parser> {
                 name: field_name,
                 type_name,
                 idx: field_idx,
+                span: self.span_end(span)?,
             });
             field_idx += 1;
 
@@ -335,11 +418,17 @@ impl<'parser> Parser<'parser> {
             }
         }
 
-        Ok(StructDeclaration { name, fields })
+        Ok(StructDeclaration {
+            name,
+            fields,
+            methods: Vec::new(),
+            span: self.span_end(outer_span)?,
+        })
     }
 
     pub fn block(&mut self) -> Result<crate::ast::Block, String> {
-        self.expect(&TokenKind::Symbol(Symbol::OpenBrace))?;
+        let span = self.span_start()?;
+        self.expect(&TokenKind::Symbol(Symbol::OpenBrace), file!(), line!())?;
         self.advance();
 
         let mut statements = Vec::new();
@@ -353,29 +442,58 @@ impl<'parser> Parser<'parser> {
             statements.push(statement);
         }
 
-        Ok(Block { statements })
+        Ok(Block {
+            statements,
+            span: self.span_end(span)?,
+        })
     }
 
     pub fn assignment(&mut self) -> Result<Expression, String> {
-        let left = self.logical_or()?;
-
-        if let Some(TokenKind::Operator(Operator::Assign(op))) = self.current() {
-            Ok(Expression::VarAssignment {
-                var_assign: VarAssignment {
-                    operator: op,
-                    left: Box::from(self.validate_assign_target(left)?),
-                    right: Box::from(self.expression()?),
-                },
-            })
+        let expr = self.logical_or()?;
+        if let Expression::BinaryOp {
+            left,
+            right,
+            op,
+            span,
+        } = expr
+        {
+            if let Operator::Assign(op) = op {
+                Ok(Expression::VarAssignment {
+                    var_assign: VarAssignment {
+                        operator: op,
+                        left: Box::from(self.validate_assign_target(*left)?),
+                        right,
+                        span,
+                    },
+                })
+            } else {
+                Ok(Expression::BinaryOp {
+                    left,
+                    right,
+                    op,
+                    span,
+                })
+            }
         } else {
-            Ok(left)
+            Ok(expr)
         }
     }
 
     fn validate_assign_target(&self, target: Expression) -> Result<Expression, String> {
         match &target {
-            Expression::Identifier { name } => Ok(target),
+            Expression::Identifier { name, span } => Ok(target),
             Expression::MemberAccess { member_access } => Ok(target),
+            Expression::UnaryOp { expr, op, span } => {
+                if let Operator::Times = op {
+                    Ok(target)
+                } else {
+                    Err(format!(
+                        "Invalid assignment target: {:?} at {}",
+                        target,
+                        self.debug_position()
+                    ))
+                }
+            }
             //Expression::IndexAccess(_) => Ok(()),
             _ => Err(format!(
                 "Invalid assignment target: {:?} at {}",
@@ -386,6 +504,7 @@ impl<'parser> Parser<'parser> {
     }
 
     pub fn if_expr(&mut self) -> Result<Expression, String> {
+        let span = self.span_start()?;
         self.eat(TokenKind::Keyword(Keyword::If))?;
         let condition = self.expression()?;
         let body = self.expression()?;
@@ -399,11 +518,13 @@ impl<'parser> Parser<'parser> {
                 condition: Box::from(condition),
                 body: Box::from(body),
                 else_body: Box::from(else_body),
+                span: self.span_end(span)?,
             },
         })
     }
 
     pub fn struct_init(&mut self) -> Result<Expression, String> {
+        let outer_span = self.span_start()?;
         let name = if let Some(TokenKind::Identifier(name)) = self.advance() {
             name
         } else {
@@ -423,6 +544,8 @@ impl<'parser> Parser<'parser> {
                 break;
             }
 
+            let field_span = self.span_start()?;
+
             let Some(TokenKind::Identifier(field_name)) = self.advance() else {
                 return Err(format!(
                     "Expected identifier, got {:?} at {}",
@@ -437,22 +560,26 @@ impl<'parser> Parser<'parser> {
                 self.advance();
                 let value = Expression::Identifier {
                     name: field_name.clone(),
+                    span: self.span_end(field_span.clone())?,
                 };
                 fields.push(StructInitializerField {
                     field_name: field_name.clone(),
                     value,
                     idx: field_idx,
+                    span: self.span_end(field_span)?,
                 });
                 field_idx += 1;
                 continue;
             } else if let Some(TokenKind::Symbol(Symbol::CloseBrace)) = self.current() {
                 let value = Expression::Identifier {
                     name: field_name.clone(),
+                    span: self.span_end(field_span.clone())?,
                 };
                 fields.push(StructInitializerField {
                     field_name: field_name.clone(),
                     value,
                     idx: field_idx,
+                    span: self.span_end(field_span)?,
                 });
                 break;
             } else {
@@ -468,25 +595,28 @@ impl<'parser> Parser<'parser> {
                 field_name,
                 value,
                 idx: field_idx,
+                span: self.span_end(field_span)?,
             });
             field_idx += 1;
 
             if let Some(TokenKind::Symbol(Symbol::Comma)) = self.current() {
                 self.advance();
             } else {
-                self.expect(&TokenKind::Symbol(Symbol::CloseBrace))?;
+                self.expect(&TokenKind::Symbol(Symbol::CloseBrace), file!(), line!())?;
             }
         }
         Ok(Expression::StructInitializer {
             struct_init: StructInitializer {
                 struct_name: name,
                 fields,
+                span: self.span_end(outer_span)?,
             },
         })
     }
 
     pub fn expression(&mut self) -> Result<Expression, String> {
         let curr = self.current();
+        //println!("expression: {:?}", curr);
         // Check for If, Block, and Fn Calls
         if let Some(TokenKind::Keyword(Keyword::If)) = curr {
             return self.if_expr();
@@ -495,6 +625,7 @@ impl<'parser> Parser<'parser> {
                 block: self.block()?,
             });
         } else if let Some(TokenKind::Identifier(_)) = curr {
+            //println!("lookahead: {:?}", self.lookahead());
             if let Some(TokenKind::Symbol(Symbol::OpenBrace)) = self.lookahead() {
                 return Ok(self.struct_init()?);
             }
@@ -509,17 +640,9 @@ impl<'parser> Parser<'parser> {
     }
 
     pub fn var_declaration(&mut self) -> Result<Statement, String> {
+        let span = self.span_start()?;
         self.advance();
-        let type_name = if let Some(TokenKind::Identifier(type_name)) = self.current() {
-            type_name.clone()
-        } else {
-            return Err(format!(
-                "Expected type name, got {:?} at {}",
-                self.current(),
-                self.debug_position()
-            ));
-        };
-        self.advance();
+        let type_name = self.type_name()?;
         let name = if let Some(TokenKind::Identifier(name)) = self.current() {
             name.clone()
         } else {
@@ -545,10 +668,12 @@ impl<'parser> Parser<'parser> {
             name,
             type_name,
             initializer,
+            span: self.span_end(span)?,
         }))
     }
 
     pub fn statement(&mut self) -> Result<crate::ast::Statement, String> {
+        let span = self.span_start()?;
         let statement = match self.current() {
             Some(TokenKind::Keyword(Keyword::Return)) => {
                 self.advance();
@@ -558,12 +683,15 @@ impl<'parser> Parser<'parser> {
                     let value = self.expression()?;
                     Some(value)
                 };
-                Ok(Statement::Return(ReturnStatement { value }))
+                Ok(Statement::Return(ReturnStatement { value, span }))
             }
             Some(TokenKind::Keyword(Keyword::Yield)) => {
                 self.advance();
                 let expression = self.expression()?;
-                Ok(Statement::Yield(YieldStatement { value: expression }))
+                Ok(Statement::Yield(YieldStatement {
+                    value: expression,
+                    span: self.span_end(span)?,
+                }))
             }
             Some(TokenKind::Keyword(Keyword::Break)) => {
                 self.advance();
@@ -576,16 +704,21 @@ impl<'parser> Parser<'parser> {
             Some(TokenKind::Keyword(Keyword::Loop)) => {
                 self.advance();
                 let body = self.block()?;
-                Ok(Statement::Loop(LoopStatement { body }))
+                Ok(Statement::Loop(LoopStatement { body, span }))
             }
             Some(TokenKind::Keyword(Keyword::Let)) => self.var_declaration(),
             Some(_) => {
                 let expression = self.expression()?;
                 Ok(Statement::Expression(expression))
             }
-            None => Err("Unexpected EOF".to_string()),
+            None => Err(format!(
+                "Expected statement, got {:?} at {}",
+                self.current(),
+                self.debug_position()
+            )),
         }?;
-        self.expect(&TokenKind::Symbol(Symbol::Semicolon))?;
+        //println!("statement: {:?}", statement);
+        self.expect(&TokenKind::Symbol(Symbol::Semicolon), file!(), line!())?;
         self.advance();
         Ok(statement)
     }
@@ -598,12 +731,14 @@ impl<'parser> Parser<'parser> {
         let mut left = builder(self)?;
 
         while let Some(TokenKind::Operator(op)) = self.current() {
+            let span = self.span_start()?;
             self.advance();
             let right = builder(self)?;
             left = Expression::LogicalOp {
                 left: Box::from(left),
                 right: Box::from(right),
                 op,
+                span: self.span_end(span)?,
             };
         }
 
@@ -618,12 +753,14 @@ impl<'parser> Parser<'parser> {
         let mut left = builder(self)?;
 
         while let Some(TokenKind::Operator(op)) = self.current() {
+            let span = self.span_start()?;
             self.advance();
             let right = builder(self)?;
             left = Expression::BinaryOp {
                 left: Box::from(left),
                 right: Box::from(right),
                 op,
+                span: self.span_end(span)?,
             };
         }
 
@@ -655,6 +792,7 @@ impl<'parser> Parser<'parser> {
     }
 
     pub fn unary(&mut self) -> Result<Expression, String> {
+        let span = self.span_start()?;
         let curr = self.current();
         match curr {
             Some(TokenKind::Operator(op)) => {
@@ -663,6 +801,7 @@ impl<'parser> Parser<'parser> {
                     Ok(Expression::UnaryOp {
                         op,
                         expr: Box::from(self.unary()?),
+                        span: self.span_end(span)?,
                     })
                 } else {
                     Err(format!(
@@ -673,7 +812,11 @@ impl<'parser> Parser<'parser> {
                 }
             }
             Some(_) => self.left_hand_side_expr(),
-            None => Err("Unexpected EOF".to_string()),
+            None => Err(format!(
+                "Expected unary operator, got {:?} at {}",
+                curr,
+                self.debug_position()
+            )),
         }
     }
 
@@ -692,17 +835,19 @@ impl<'parser> Parser<'parser> {
     }
 
     fn call_expr(&mut self, callee: Expression) -> Result<Expression, String> {
+        let span = self.span_start()?;
         Ok(Expression::FnCall {
             fn_call: FunctionCall {
                 callee: Box::from(callee),
                 args: self.arguments()?,
+                span: self.span_end(span)?,
             },
         })
     }
 
     pub fn arguments(&mut self) -> Result<Vec<Expression>, String> {
         let mut args = Vec::new();
-        self.expect(&TokenKind::Symbol(Symbol::OpenParen))?;
+        self.expect(&TokenKind::Symbol(Symbol::OpenParen), file!(), line!())?;
         self.advance();
         loop {
             match self.current() {
@@ -717,10 +862,16 @@ impl<'parser> Parser<'parser> {
                         self.advance();
                         break;
                     }
-                    self.expect(&TokenKind::Symbol(Symbol::Comma))?;
+                    self.expect(&TokenKind::Symbol(Symbol::Comma), file!(), line!())?;
                     self.advance();
                 }
-                None => return Err("Unexpected EOF".to_string()),
+                None => {
+                    return Err(format!(
+                        "Expected argument, got {:?} at {}",
+                        self.current(),
+                        self.debug_position()
+                    ))
+                }
             };
         }
         Ok(args)
@@ -732,6 +883,7 @@ impl<'parser> Parser<'parser> {
         while let Some(TokenKind::Symbol(Symbol::Dot))
         | Some(TokenKind::Symbol(Symbol::OpenBracket)) = self.current()
         {
+            let span = self.span_start()?;
             if let Some(TokenKind::Symbol(Symbol::Dot)) = self.current() {
                 self.advance();
                 let prop = self.identifier()?;
@@ -740,18 +892,20 @@ impl<'parser> Parser<'parser> {
                         object: Box::from(object),
                         member: Box::from(prop),
                         computed: false,
+                        span: self.span_end(span)?,
                     },
                 };
             } else {
                 self.advance();
                 let prop = self.expression()?;
-                self.expect(&TokenKind::Symbol(Symbol::CloseBracket))?;
+                self.expect(&TokenKind::Symbol(Symbol::CloseBracket), file!(), line!())?;
                 self.advance();
                 object = Expression::MemberAccess {
                     member_access: MemberAccess {
                         object: Box::from(object),
                         member: Box::from(prop),
                         computed: true,
+                        span: self.span_end(span)?,
                     },
                 };
             }
@@ -761,13 +915,21 @@ impl<'parser> Parser<'parser> {
     }
 
     pub fn identifier(&mut self) -> Result<Expression, String> {
+        let span = self.span_start()?;
         match self.current() {
             Some(TokenKind::Identifier(id)) => {
                 self.advance();
-                Ok(Expression::Identifier { name: id })
+                Ok(Expression::Identifier {
+                    name: id,
+                    span: self.span_end(span)?,
+                })
             }
             Some(_) => Err("Expected identifier".to_string()),
-            None => Err("Unexpected EOF".to_string()),
+            None => Err(format!(
+                "Expected identifier, got {:?} at {}",
+                self.current(),
+                self.debug_position()
+            )),
         }
     }
 
@@ -775,9 +937,19 @@ impl<'parser> Parser<'parser> {
         match self.current() {
             Some(TokenKind::Literal(_)) => Ok(self.literal()?),
             Some(TokenKind::Symbol(Symbol::OpenParen)) => Ok(self.paren_expr()?),
-            Some(TokenKind::Identifier(_)) => Ok(self.identifier()?),
+            Some(TokenKind::Identifier(_)) => {
+                if let Some(TokenKind::Symbol(Symbol::OpenBrace)) = self.lookahead() {
+                    Ok(self.struct_init()?)
+                } else {
+                    Ok(self.identifier()?)
+                }
+            }
             Some(_) => Ok(self.left_hand_side_expr()?),
-            None => Err("Unexpected EOF".to_string()),
+            None => Err(format!(
+                "Expected primary expression, got {:?} at {}",
+                self.current(),
+                self.debug_position()
+            )),
         }
     }
 
@@ -785,28 +957,39 @@ impl<'parser> Parser<'parser> {
         let Some(TokenKind::Literal(literal)) = self.current() else {
             return Err("Expected literal".to_string());
         };
+
         self.advance();
-        Ok(Expression::Literal { literal })
+        Ok(Expression::Literal {
+            literal,
+            //span: self.span()?,
+        })
     }
 
     fn paren_expr(&mut self) -> Result<Expression, String> {
-        self.expect(&TokenKind::Symbol(Symbol::OpenParen))?;
+        self.expect(&TokenKind::Symbol(Symbol::OpenParen), file!(), line!())?;
         self.advance();
         let expr = self.expression()?;
-        self.expect(&TokenKind::Symbol(Symbol::CloseParen))?;
+        self.expect(&TokenKind::Symbol(Symbol::CloseParen), file!(), line!())?;
         self.advance();
         Ok(expr)
     }
 
     fn function_decl(
         &mut self,
-        fn_sig: (String, Vec<FunctionParameter>, Option<String>),
+        fn_sig: (
+            String,
+            Vec<FunctionParameter>,
+            Option<String>,
+            bool,
+            NodeSpan,
+        ),
     ) -> Result<FunctionDeclaration, String> {
         self.eat(TokenKind::Symbol(Symbol::Semicolon))?;
         Ok(FunctionDeclaration {
             name: fn_sig.0,
             params: fn_sig.1,
             return_type: fn_sig.2,
+            variadic: fn_sig.3,
         })
     }
 }

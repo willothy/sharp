@@ -22,9 +22,14 @@ impl<'t> Type<'t> {
 
     pub fn empty() -> Self {
         Self {
-            sig: TypeSignature::Empty,
+            sig: TypeSignature::Void,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PointerType<'t> {
+    pub target: Box<TypeSignature<'t>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,12 +37,13 @@ pub enum TypeSignature<'t> {
     Primitive(PrimitiveType),
     Struct(Option<StructType<'t>>),
     Function(FunctionType<'t>),
-    Empty,
+    Pointer(PointerType<'t>),
+    Void,
 }
 
 impl<'t> TypeSignature<'t> {
-    pub fn is_empty(&self) -> bool {
-        matches!(self, TypeSignature::Empty)
+    pub fn is_void(&self) -> bool {
+        matches!(self, TypeSignature::Void)
     }
 
     pub fn is_primitive(&self) -> bool {
@@ -58,6 +64,27 @@ impl<'t> TypeSignature<'t> {
             _ => Err(format!("Type {:?} is not a function", self)),
         }
     }
+
+    pub fn get_ptr_inner_ty(&self) -> TypeSignature<'t> {
+        if let TypeSignature::Pointer(p) = self {
+            (*p.target).clone()
+        } else {
+            self.clone()
+        }
+    }
+
+    pub fn wrap_in_ptr(&self) -> TypeSignature<'t> {
+        TypeSignature::Pointer(PointerType {
+            target: Box::new(self.clone()),
+        })
+    }
+
+    pub fn get_base_type(&self) -> TypeSignature<'t> {
+        match self {
+            TypeSignature::Pointer(p) => p.target.get_base_type(),
+            _ => self.clone(),
+        }
+    }
 }
 
 impl<'t> Hash for Type<'t> {
@@ -72,8 +99,15 @@ impl<'t> Hash for TypeSignature<'t> {
             TypeSignature::Primitive(p) => p.hash(state),
             TypeSignature::Struct(s) => s.hash(state),
             TypeSignature::Function(f) => f.hash(state),
-            TypeSignature::Empty => 0.hash(state),
+            TypeSignature::Void => 0.hash(state),
+            TypeSignature::Pointer(p) => p.hash(state),
         }
+    }
+}
+
+impl<'t> Hash for PointerType<'t> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.target.hash(state);
     }
 }
 
@@ -108,6 +142,8 @@ impl<'fn_param> Hash for TypedFunctionParameter<'fn_param> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PrimitiveType {
+    I8,
+    I16,
     I32,
     I64,
     F32,
@@ -159,6 +195,7 @@ pub struct TypedStructField<'field> {
 pub struct FunctionType<'fn_type> {
     pub return_type: Option<TypeRef<'fn_type>>,
     pub params: HashMap<String, TypedFunctionParameter<'fn_type>>,
+    pub variadic: bool,
 }
 
 impl<'fn_type> PartialEq for FunctionType<'fn_type> {

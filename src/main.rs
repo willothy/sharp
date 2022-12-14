@@ -1,5 +1,7 @@
 // Author: Will Hopkins
 
+use std::fs::{self, File};
+
 use crate::{codegen::generator::CodeGenerator, tokenizer::Span};
 
 mod ast;
@@ -8,39 +10,49 @@ mod parser;
 mod tokenizer;
 mod typechecker;
 
+const DEBUG_COMPILE_MODULE: bool = true;
+const DEBUG_WRITE_IR_FILE: bool = true;
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let source = r#"
-fn printf(str format) -> i32;
+    let source_path = std::env::current_dir()?.join("test.sharp");
+    let source_file = fs::read_to_string(&source_path)?;
+    let source = source_file;
 
-struct Num {
-    i32 value
-}
+    let source_span = Span::from(source.as_str());
+    let Some(tokens) = tokenizer::tokenize(source_span) else {
+        return Err("Failed to tokenize source".into());
+    };
 
-fn main() -> i32 {
-    let Num n = Num { value: 5 };
-    printf("Hello, %d!", n.value);
-    return n.value;
-}
-    "#;
-    let source = Span::from(source);
-    let (remaining, tokens) = tokenizer::tokenize(source)?;
-    assert!(remaining.is_empty());
-    //println!("{:?}", remaining);
-    //println!("{:#?}", tokens);
-    let module = parser::parse(tokens, "main".into())?;
+    let module = parser::parse(tokens, source.to_string(), "main".into())?;
     println!("{:#?}", module);
     let mut tc = typechecker::TypeChecker::new();
     let checked = tc.typecheck_module(&module)?;
-
-    //println!("{:#?}", checked.module);
 
     let llvm_ctx = inkwell::context::Context::create();
     let generator = CodeGenerator::new(&checked, &llvm_ctx);
     let generated_mod = generator.codegen_module()?;
 
-    println!("{}", generated_mod.to_string());
-    //println!("{:#?}", checked.names);
-    //println!("{:#?}", checked.types);
-    //println!("{:#?}", checked);
+    println!("{}", generated_mod.print_to_string().to_string());
+
+    let module_str = generated_mod.to_string();
+    let mod_path = std::env::current_dir()?.join("out.ll");
+    if DEBUG_WRITE_IR_FILE || DEBUG_COMPILE_MODULE {
+        std::fs::write(&mod_path, module_str)?;
+        //generated_mod.write_bitcode_to_path(mod_path.as_path());
+    }
+
+    if DEBUG_COMPILE_MODULE {
+        let mod_path_str = mod_path.to_str().unwrap();
+        let out_path = mod_path.with_file_name("test");
+        let output = std::process::Command::new("clang")
+            .arg(mod_path_str)
+            .arg("-o")
+            .arg(out_path)
+            .output()?;
+
+        println!("{}", String::from_utf8(output.stdout)?);
+        println!("{}", String::from_utf8(output.stderr)?);
+    }
+
     Ok(())
 }

@@ -31,6 +31,7 @@ pub struct TypedFunctionDefinition<'ast> {
     pub params: HashMap<String, TypedFunctionParameter<'ast>>,
     pub body: TypedBlock<'ast>,
     pub fn_ty: TypeRef<'ast>,
+    pub variadic: bool,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -39,6 +40,7 @@ pub struct TypedFunctionDeclaration<'ast> {
     pub ret_ty: Option<TypeRef<'ast>>,
     pub params: HashMap<String, TypedFunctionParameter<'ast>>,
     pub fn_ty: TypeRef<'ast>,
+    pub variadic: bool,
 }
 
 #[derive(Debug, PartialEq, Clone)]

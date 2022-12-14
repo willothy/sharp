@@ -2,7 +2,7 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::ast;
 
-use super::type_sig::{Name, PrimitiveType, Type, TypeSignature};
+use super::type_sig::{Name, PointerType, PrimitiveType, Type, TypeSignature};
 
 #[derive(Debug, Clone)]
 pub struct TypeCheckContext<'ctx> {
@@ -41,9 +41,9 @@ impl<'ctx> LocalTypecheckContext<'ctx> {
         }
     }
 
-    pub fn with_yield(&self, ty: TypeRef<'ctx>) -> Self {
+    pub fn with_yield(&self, ty: Option<TypeRef<'ctx>>) -> Self {
         let mut new = self.clone();
-        new.yield_type = Some(ty);
+        new.yield_type = ty;
         new
     }
 }
@@ -75,6 +75,14 @@ impl<'ctx> TypeCheckContext<'ctx> {
     fn load_primitives(&mut self) {
         // Add primitive types
         self.primitives.insert(
+            "i8".into(),
+            new_type(Type::new(TypeSignature::Primitive(PrimitiveType::I8))),
+        );
+        self.primitives.insert(
+            "i16".into(),
+            new_type(Type::new(TypeSignature::Primitive(PrimitiveType::I16))),
+        );
+        self.primitives.insert(
             "i32".into(),
             new_type(Type::new(TypeSignature::Primitive(PrimitiveType::I32))),
         );
@@ -102,6 +110,8 @@ impl<'ctx> TypeCheckContext<'ctx> {
             "str".into(),
             new_type(Type::new(TypeSignature::Primitive(PrimitiveType::Str))),
         );
+        self.primitives
+            .insert("void".into(), new_type(Type::new(TypeSignature::Void)));
     }
 
     /* pub fn enter_fn(self, fn_type: TypeRef<'ctx>) -> Self {
@@ -146,13 +156,37 @@ impl<'ctx> TypeCheckContext<'ctx> {
     } */
 
     pub fn get_type(&self, type_name: String) -> Result<TypeRef<'ctx>, String> {
-        if let Some(t) = self.primitives.get(&type_name) {
-            return Ok(t.clone());
+        let mut ptr_dim = 0;
+        for c in type_name.chars() {
+            if c == '*' {
+                ptr_dim += 1;
+            } else {
+                break;
+            }
         }
-        match self.types.get(&type_name) {
-            Some(type_) => Ok(type_.clone()),
-            None => Err(format!("{} is not a valid type", type_name)),
+        let type_name = type_name[ptr_dim..].to_string();
+        let sig = if let Some(t) = self.primitives.get(&type_name) {
+            t.sig()
+        } else {
+            match self.types.get(&type_name) {
+                Some(type_) => type_.sig(),
+                None => {
+                    return Err(format!(
+                        "{} is not a valid type {}:{}",
+                        type_name,
+                        file!(),
+                        line!()
+                    ))
+                }
+            }
+        };
+        let mut new_type_sig = sig;
+        for _ in 0..ptr_dim {
+            new_type_sig = TypeSignature::Pointer(PointerType {
+                target: Box::from(new_type_sig),
+            });
         }
+        Ok(new_type(Type::new(new_type_sig)))
     }
 }
 
