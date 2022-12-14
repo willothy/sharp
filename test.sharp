@@ -10,13 +10,22 @@ struct test {
 }
 
 fn main() -> i32 {
-    let i32 a = if 1 == 2 {
-        yield 5;
+    let i32 a = 1;
+    let i32 b = 1;
+    let i32 c = 2;
+    let i32 d = 3;
+
+    let i32 x = if a == 1 {
+        yield if b == a {
+            yield 3;
+        } else {
+            yield 1;
+        };
     } else {
         yield 2;
     };
 
-    printf("%d\n", a);
-    return a;
+    printf("%d\n", x);
+    return x;
 }
 

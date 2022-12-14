@@ -354,24 +354,53 @@ impl<'gen> CodeGenerator<'gen> {
                     return Err("Expected function".into());
                 };
 
-                let current_block = self.ctx.ir_builder.get_insert_block().unwrap();
+                let mut entry_block = self.ctx.ir_builder.get_insert_block().unwrap();
+
+                let then_block = self.ctx.llvm_ctx.append_basic_block(func, "then");
+
+                let mut else_block = self.ctx.llvm_ctx.append_basic_block(func, "else");
 
                 let end_block = self.ctx.llvm_ctx.append_basic_block(func, "end");
 
-                let then_block = self.ctx.llvm_ctx.prepend_basic_block(end_block, "then");
+                self.ctx.ir_builder.position_at_end(entry_block);
+                self.ctx.ir_builder.build_conditional_branch(
+                    condition.into_int_value(),
+                    then_block,
+                    else_block,
+                );
+                entry_block = self.ctx.ir_builder.get_insert_block().unwrap();
+
                 self.ctx.ir_builder.position_at_end(then_block);
                 let then_result = self.codegen_expression(body, local_ctx.clone())?;
                 self.ctx.ir_builder.build_unconditional_branch(end_block);
+                let then_block = self.ctx.ir_builder.get_insert_block().unwrap();
 
-                let (else_block, else_result) = if let Some(else_body) = else_body.as_ref() {
-                    let else_block = self.ctx.llvm_ctx.prepend_basic_block(end_block, "else");
+                self.ctx.ir_builder.position_at_end(else_block);
+
+                let else_result = if let Some(else_body) = else_body.as_ref() {
+                    let else_result = self.codegen_expression(else_body, local_ctx.clone())?;
+                    self.ctx.ir_builder.build_unconditional_branch(end_block);
+                    else_block = self.ctx.ir_builder.get_insert_block().unwrap();
+                    else_result
+                } else {
+                    self.ctx.ir_builder.build_unconditional_branch(end_block);
+                    None
+                };
+
+                /* let (else_result, else_block) = if let Some(else_body) = else_body.as_ref() {
                     self.ctx.ir_builder.position_at_end(else_block);
                     let else_result = self.codegen_expression(else_body, local_ctx)?;
                     self.ctx.ir_builder.build_unconditional_branch(end_block);
-                    (else_block, else_result)
+                    let else_block = self.ctx.ir_builder.get_insert_block().unwrap();
+                    (else_result, else_block)
                 } else {
-                    (end_block, None)
-                };
+                    (None, else_block)
+                }; */
+
+                println!(
+                    "then: {:?}\nelse: {:?}\nend: {:?}\n",
+                    then_block, else_block, end_block
+                );
 
                 self.ctx.ir_builder.position_at_end(end_block);
                 let res = if let Some(ty) = &body.ty {
@@ -387,13 +416,6 @@ impl<'gen> CodeGenerator<'gen> {
                 } else {
                     None
                 };
-
-                self.ctx.ir_builder.position_at_end(current_block);
-                self.ctx.ir_builder.build_conditional_branch(
-                    condition.into_int_value(),
-                    then_block,
-                    else_block,
-                );
 
                 self.ctx.ir_builder.position_at_end(end_block);
 

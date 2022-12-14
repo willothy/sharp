@@ -529,7 +529,7 @@ impl<'parser> Parser<'parser> {
             name
         } else {
             return Err(format!(
-                "Expected identifier, got {:?} at {}",
+                "Failed to parse struct init: Expected identifier, got {:?} at {}",
                 self.current(),
                 self.debug_position()
             ));
@@ -548,7 +548,7 @@ impl<'parser> Parser<'parser> {
 
             let Some(TokenKind::Identifier(field_name)) = self.advance() else {
                 return Err(format!(
-                    "Expected identifier, got {:?} at {}",
+                    "Failed to parse field name: Expected identifier, got {:?} at {}",
                     self.current(),
                     self.debug_position()
                 ));
@@ -647,7 +647,7 @@ impl<'parser> Parser<'parser> {
             name.clone()
         } else {
             return Err(format!(
-                "Expected identifier, got {:?} at {}",
+                "Failed to parse var declaration: Expected identifier, got {:?} at {}",
                 self.current(),
                 self.debug_position()
             ));
@@ -926,7 +926,7 @@ impl<'parser> Parser<'parser> {
             }
             Some(_) => Err("Expected identifier".to_string()),
             None => Err(format!(
-                "Expected identifier, got {:?} at {}",
+                "Failed to parse identifier: Expected identifier, got {:?} at {}",
                 self.current(),
                 self.debug_position()
             )),
@@ -938,11 +938,13 @@ impl<'parser> Parser<'parser> {
             Some(TokenKind::Literal(_)) => Ok(self.literal()?),
             Some(TokenKind::Symbol(Symbol::OpenParen)) => Ok(self.paren_expr()?),
             Some(TokenKind::Identifier(_)) => {
-                if let Some(TokenKind::Symbol(Symbol::OpenBrace)) = self.lookahead() {
+                /* if let Some(TokenKind::Symbol(Symbol::OpenBrace)) = self.lookahead() {
+                    println!("struct init 1");
                     Ok(self.struct_init()?)
                 } else {
                     Ok(self.identifier()?)
-                }
+                } */
+                Ok(self.identifier()?)
             }
             Some(_) => Ok(self.left_hand_side_expr()?),
             None => Err(format!(
