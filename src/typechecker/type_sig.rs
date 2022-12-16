@@ -1,6 +1,11 @@
-use std::{collections::HashMap, hash::Hash};
+use std::{cell::RefCell, collections::HashMap, hash::Hash, rc::Rc};
 
-use super::context::TypeRef;
+use crate::ast::FunctionDefinition;
+
+use super::{
+    context::{TypeId, TypeRef},
+    typed_ast::TypedFunctionDefinition,
+};
 
 #[derive(Debug, Clone)]
 pub struct Type<'t> {
@@ -32,10 +37,26 @@ pub struct PointerType<'t> {
     pub target: Box<TypeSignature<'t>>,
 }
 
+impl<'t> PointerType<'t> {
+    pub fn base_type(&self) -> TypeSignature<'t> {
+        self.target.get_base_type()
+    }
+
+    pub fn depth(&self) -> usize {
+        let mut depth = 1;
+        let mut current = self.target.as_ref();
+        while let TypeSignature::Pointer(p) = current {
+            depth += 1;
+            current = p.target.as_ref();
+        }
+        depth
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeSignature<'t> {
     Primitive(PrimitiveType),
-    Struct(Option<StructType<'t>>),
+    Struct(TypeId),
     Function(FunctionType<'t>),
     Pointer(PointerType<'t>),
     Void,
@@ -58,6 +79,14 @@ impl<'t> TypeSignature<'t> {
         matches!(self, TypeSignature::Function(_))
     }
 
+    pub fn struct_id(&self) -> Result<TypeId, String> {
+        if let TypeSignature::Struct(id) = self {
+            Ok(*id)
+        } else {
+            Err(format!("Type {:?} is not a struct", self))
+        }
+    }
+
     pub fn get_return_type(&'t self) -> Result<Option<TypeRef>, String> {
         match self {
             TypeSignature::Function(f) => Ok(f.return_type.clone()),
@@ -67,7 +96,7 @@ impl<'t> TypeSignature<'t> {
 
     pub fn get_ptr_inner_ty(&self) -> TypeSignature<'t> {
         if let TypeSignature::Pointer(p) = self {
-            (*p.target).clone()
+            p.target.as_ref().clone()
         } else {
             self.clone()
         }
@@ -84,6 +113,35 @@ impl<'t> TypeSignature<'t> {
             TypeSignature::Pointer(p) => p.target.get_base_type(),
             _ => self.clone(),
         }
+    }
+
+    pub fn string_repr(&self) -> String {
+        let mut repr = String::new();
+        let mut current = self;
+        while let TypeSignature::Pointer(p) = current {
+            repr += format!("*{}", p.target.string_repr()).as_str();
+            current = &p.target;
+        }
+        match current {
+            TypeSignature::Primitive(p) => {
+                repr += match p {
+                    PrimitiveType::I8 => "i8",
+                    PrimitiveType::I16 => "i16",
+                    PrimitiveType::I32 => "i32",
+                    PrimitiveType::I64 => "i64",
+                    PrimitiveType::F32 => "f32",
+                    PrimitiveType::F64 => "f64",
+                    PrimitiveType::Bool => "bool",
+                    PrimitiveType::Char => "char",
+                    PrimitiveType::Str => "str",
+                }
+            }
+            TypeSignature::Struct(id) => repr += format!("struct {}", id).as_str(),
+            TypeSignature::Function(f) => repr += "fn",
+            TypeSignature::Void => repr += "void",
+            _ => panic!(),
+        }
+        repr
     }
 }
 
@@ -174,6 +232,13 @@ impl TryFrom<String> for PrimitiveType {
 pub struct StructType<'struct_type> {
     pub name: String,
     pub fields: HashMap<String, TypedStructField<'struct_type>>,
+    pub methods: HashMap<String, TypedFunctionDefinition<'struct_type>>,
+    pub id: usize,
+}
+impl<'struct_type> StructType<'struct_type> {
+    pub(crate) fn get_member_idx(&self, name: &String) -> Option<u32> {
+        self.fields.get(name).map(|f| f.idx)
+    }
 }
 
 impl<'struct_type> PartialEq for StructType<'struct_type> {

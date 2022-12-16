@@ -1,37 +1,16 @@
-use std::{
-    borrow::{Borrow, BorrowMut},
-    cell::{Ref, RefCell},
-    collections::HashMap,
-    error::Error,
-    rc::Rc,
-};
+use std::{borrow::BorrowMut, collections::HashMap, error::Error, rc::Rc};
 
 use inkwell::{
-    attributes::Attribute,
     module::Linkage,
-    types::{AnyType, AnyTypeEnum, BasicType, BasicTypeEnum},
-    values::{BasicMetadataValueEnum, BasicValue, BasicValueEnum, InstructionValue, MetadataValue},
+    types::BasicType,
+    values::{BasicMetadataValueEnum, BasicValue, BasicValueEnum, PointerValue},
     AddressSpace,
 };
 
 use crate::{
-    ast::Declaration,
-    tokenizer::Operator,
-    typechecker::{
-        context::TypeSig,
-        type_sig::{FunctionType, PrimitiveType, TypeSignature},
-        typed_ast::{
-            TypedDeclaration, TypedFunctionDeclaration, TypedFunctionDefinition, TypedIfExpression,
-            TypedMemberAccess, TypedModule, TypedReturnStatement, TypedStatement,
-            TypedStructDeclaration, TypedStructInitializer, TypedVarDeclaration,
-            TypedYieldStatement,
-        },
-    },
-};
-use crate::{
+    debug, debugln,
     tokenizer::Literal,
     typechecker::{
-        context::TypeCheckContext,
         typed_ast::{
             TypedExpression, TypedExpressionData, TypedFunctionCall, TypedLiteral,
             TypedVarAssignment,
@@ -39,10 +18,21 @@ use crate::{
         TypeCheckModule,
     },
 };
+use crate::{
+    tokenizer::Operator,
+    typechecker::{
+        context::TypeSig,
+        type_sig::TypeSignature,
+        typed_ast::{
+            TypedDeclaration, TypedFunctionDeclaration, TypedFunctionDefinition, TypedIfExpression,
+            TypedMemberAccess, TypedResultStatement, TypedReturnStatement, TypedStatement,
+            TypedStructDeclaration, TypedStructInitializer, TypedVarDeclaration,
+        },
+    },
+};
 
 use super::context::{
-    to_basic, CodegenContext, CodegenLLVMType, CodegenName, CodegenType, GetLLVMType,
-    LocalCodegenContext,
+    CodegenContext, CodegenLLVMType, CodegenName, CodegenType, LocalCodegenContext,
 };
 
 pub struct CodeGenerator<'gen> {
@@ -54,6 +44,7 @@ impl<'gen> CodeGenerator<'gen> {
         tc_mod: &'gen TypeCheckModule<'gen>,
         llvm_ctx: &'gen inkwell::context::Context,
     ) -> Self {
+        debug!("generator::CodeGenerator::new");
         let module = llvm_ctx.create_module("main");
         let builder = llvm_ctx.create_builder();
         Self {
@@ -63,20 +54,39 @@ impl<'gen> CodeGenerator<'gen> {
     pub fn codegen_module(
         &self,
     ) -> Result<inkwell::module::Module<'gen>, Box<dyn std::error::Error>> {
+        debug!("generator::CodeGenerator::codegen_module");
         let mut local_ctx = LocalCodegenContext {
             names: HashMap::new(),
             types: HashMap::new(),
             return_type: None,
-            yield_type: None,
+            result_type: None,
             current_fn: None,
+            structs: HashMap::new(),
         };
 
         self.ctx.add_primitive_types(&mut local_ctx);
+        local_ctx.structs = self.ctx.tc_mod.ctx.structs.clone();
 
-        for (name, name_ctx) in &self.ctx.tc_mod.ctx.types {
-            let type_sig = name_ctx.sig();
-            let llvm_t = self.ctx.to_llvm_ty(&type_sig)?;
-            local_ctx.add_type(CodegenType::new(name.clone(), type_sig.clone(), llvm_t));
+        /*local_ctx.types = self
+        .ctx
+        .tc_mod
+        .ctx
+        .types
+        .iter()
+        .map(|(k, v)| {
+            let llvm_t = None; //self.ctx.to_llvm_ty(ty, local_ctx);
+            (
+                v.sig(),
+                Rc::new(CodegenType::new(k.clone(), v.sig(), llvm_t)),
+            )
+        })
+        .collect(); */
+
+        // Codegen structs
+        for decl in &self.ctx.tc_mod.module.body {
+            if let TypedDeclaration::Struct(structure) = decl {
+                self.codegen_struct(structure, &mut local_ctx)?;
+            }
         }
 
         for (name, name_ctx) in &self.ctx.tc_mod.ctx.names {
@@ -85,7 +95,7 @@ impl<'gen> CodeGenerator<'gen> {
                 Rc::from(CodegenType::new(
                     name.clone(),
                     t,
-                    self.ctx.function_to_llvm_ty(&fn_t)?,
+                    Some(self.ctx.function_to_llvm_ty(&fn_t, &local_ctx.structs)?),
                 ))
             } else {
                 let Some(t) = local_ctx.types.get(&t) else {
@@ -96,13 +106,6 @@ impl<'gen> CodeGenerator<'gen> {
 
             let name = CodegenName::new(name.clone(), t.clone());
             local_ctx.add_name(name);
-        }
-
-        // Codegen structs
-        for decl in &self.ctx.tc_mod.module.body {
-            if let TypedDeclaration::Struct(structure) = decl {
-                self.codegen_struct(structure, &mut local_ctx)?;
-            }
         }
 
         // Codegen function declarations
@@ -121,18 +124,69 @@ impl<'gen> CodeGenerator<'gen> {
         Ok(self.ctx.llvm_module.clone())
     }
 
+    fn codegen_struct(
+        &self,
+        structure: &'gen TypedStructDeclaration<'gen>,
+        local_ctx: &mut LocalCodegenContext<'gen>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        debug!("generator::CodeGenerator::codegen_struct");
+        let TypedStructDeclaration {
+            name,
+            fields,
+            ty,
+            id,
+        } = structure;
+        let struct_t = self.ctx.to_llvm_ty(&ty.sig(), &local_ctx.structs)?;
+        println!("struct_t: {:?}", struct_t);
+        /* let structure = self.ctx.llvm_ctx.opaque_struct_type(name);
+        let mut fds = Vec::new();
+        for field in fields {
+            let sig = field.ty.sig();
+            let basic = self.ctx.to_llvm_ty(&sig, &local_ctx.structs)?;
+            fds.push(basic.basic()?);
+        }
+
+        let fields_slice = fds.as_slice();
+        structure.set_body(fields_slice, false); */
+
+        local_ctx.types.insert(
+            ty.sig(),
+            Rc::new(CodegenType {
+                name: name.clone(),
+                ty: ty.sig(),
+                llvm_ty: Some(struct_t),
+            }),
+        );
+
+        // add struct to context
+
+        /* let Some(s) = self.ctx.llvm_ctx.get_struct_type(name) else {
+            return Err(format!("Type not found: {:?} {}:{}", ty, file!(), line!()).into());
+        }; */
+
+        // add struct to module
+        /* self.ctx.llvm_module.get_struct_type(name); */
+
+        Ok(())
+    }
+
     fn codegen_fn_decl(
         &self,
         func: &'gen TypedFunctionDeclaration,
         local_ctx: LocalCodegenContext<'gen>,
     ) -> Result<(), Box<dyn Error>> {
+        debug!("generator::CodeGenerator::codegen_fn_decl");
         let Some(func_reg) = local_ctx.names.get(&func.name) else {
+            return Err(format!("Function not found: {}", func.name).into());
+        };
+
+        let Some(llvm_ty) = func_reg.ty.llvm_ty.clone() else {
             return Err(format!("Function not found: {}", func.name).into());
         };
 
         let _llvm_fn = self.ctx.llvm_module.add_function(
             &func.name.clone(),
-            func_reg.ty.llvm_ty.function()?,
+            llvm_ty.function()?,
             Some(Linkage::External),
         );
 
@@ -144,15 +198,19 @@ impl<'gen> CodeGenerator<'gen> {
         func: &'gen TypedFunctionDefinition<'gen>,
         mut local_ctx: LocalCodegenContext<'gen>,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        debug!("generator::CodeGenerator::codegen_fn_def");
         let Some(func_reg) = local_ctx.names.get(&func.name) else {
             return Err(format!("Function not found: {}", func.name).into());
         };
 
-        let llvm_fn = self.ctx.llvm_module.add_function(
-            &func.name.clone(),
-            func_reg.ty.llvm_ty.function()?,
-            None,
-        );
+        let Some(llvm_ty) = func_reg.ty.llvm_ty.clone() else {
+            return Err(format!("Function not found: {}", func.name).into());
+        };
+
+        let llvm_fn =
+            self.ctx
+                .llvm_module
+                .add_function(&func.name.clone(), llvm_ty.function()?, None);
 
         for (idx, param) in func.params.values().enumerate() {
             let type_sig = param.ty.sig();
@@ -189,6 +247,7 @@ impl<'gen> CodeGenerator<'gen> {
         stmt: &'gen TypedStatement<'gen>,
         mut local_ctx: &mut LocalCodegenContext<'gen>,
     ) -> Result<Option<BasicValueEnum<'gen>>, Box<dyn std::error::Error>> {
+        debug!("generator::CodeGenerator::codegen_statement");
         match stmt {
             TypedStatement::Variable(var_stmt) => {
                 self.codegen_variable_statement(var_stmt, &mut local_ctx)?;
@@ -203,8 +262,8 @@ impl<'gen> CodeGenerator<'gen> {
                 self.codegen_return_statement(ret_stmt, local_ctx.clone())?;
                 Ok(None)
             }
-            TypedStatement::Yield(yield_stmt) => Ok(Some(
-                self.codegen_yield_statement(yield_stmt, local_ctx.clone())?,
+            TypedStatement::Result(result_stmt) => Ok(Some(
+                self.codegen_result_statement(result_stmt, local_ctx.clone())?,
             )),
             TypedStatement::Continue => todo!(),
             TypedStatement::Break => todo!(),
@@ -216,19 +275,41 @@ impl<'gen> CodeGenerator<'gen> {
         var_stmt: &'gen TypedVarDeclaration<'gen>,
         local_ctx: &mut LocalCodegenContext<'gen>,
     ) -> Result<(), Box<dyn Error>> {
+        debug!("generator::CodeGenerator::codegen_variable_statement");
         let type_sig = var_stmt.ty.sig();
 
-        let Some(var_type) = local_ctx.get_base_type(&type_sig) else {
-            return Err(format!("Type not found: {:?} {}:{}", var_stmt.ty, file!(), line!()).into());
+        let Some(base_type) = local_ctx.get_base_type(&type_sig) else {
+            return Err(format!("Base Type not found: {:?} {}:{}", var_stmt.ty, file!(), line!()).into());
         };
-        let var_type = var_type.clone();
+        let base_type_name = base_type.name.clone();
+
+        /* let Some(base_llvm_type) = self.ctx.llvm_ctx.get_struct_type(&base_type_name) else {
+            return Err(format!("Struct Type not found: {:?} {}:{}", &base_type_name, file!(), line!()).into());
+        }; */
+        let base_llvm_type = self.ctx.to_llvm_ty(&type_sig, &local_ctx.structs)?;
+
+        let ptr_depth = local_ctx.get_ptr_depth(&type_sig);
+
+        let var_type = if ptr_depth > 0 {
+            Rc::new(CodegenType {
+                name: type_sig.string_repr(),
+                ty: type_sig.clone(),
+                llvm_ty: Some(self.ctx.to_llvm_ty(&type_sig, &local_ctx.structs)?),
+            })
+        } else {
+            base_type
+        };
 
         let mut var_name = CodegenName::new(var_stmt.name.clone(), var_type.clone());
+
+        let Some(llvm_ty) = &var_type.llvm_ty else {
+            return Err(format!("Type not found: {:?} {}:{}", var_type, file!(), line!()).into());
+        };
 
         let store_ptr = self
             .ctx
             .ir_builder
-            .build_alloca(var_type.llvm_ty.basic()?, &var_stmt.name);
+            .build_alloca(llvm_ty.basic()?, &var_stmt.name);
         // Add store ptr to local context
         var_name.alloc = Some(store_ptr.clone());
         local_ctx.add_name(var_name);
@@ -238,13 +319,8 @@ impl<'gen> CodeGenerator<'gen> {
             let Some(init) = init else {
                 return Err("Expected initializer".into());
             };
-            //println!("init: {:?}", init);
-            let var = self.ctx.ir_builder.build_store(store_ptr, init);
-            //println!("var: {:?}", var);
-            /* let var = ctx
-                .ir_builder
-                .build_load(to_basic(var_type.llvm_ty)?, &var_stmt.name);
-            ctx.ir_builder.build_store(var, init); */
+            debugln!();
+            self.ctx.ir_builder.build_store(store_ptr, init);
         }
 
         Ok(())
@@ -255,13 +331,14 @@ impl<'gen> CodeGenerator<'gen> {
         init: &'gen TypedExpression<'gen>,
         local_ctx: LocalCodegenContext<'gen>,
     ) -> Result<Option<BasicValueEnum<'gen>>, Box<dyn Error>> {
+        debug!("generator::CodeGenerator::codegen_expression");
         let res = match init {
             TypedExpression {
-                ty,
+                ty: _,
                 expr: TypedExpressionData::BinaryOp { left, right, op },
             } => Some(self.codegen_binary_op(left, right, op, local_ctx)?),
             TypedExpression {
-                ty,
+                ty: _,
                 expr: TypedExpressionData::LogicalOp { left, right, op },
             } => {
                 let Some(left) = self.codegen_expression(left, local_ctx.clone())? else {
@@ -280,7 +357,7 @@ impl<'gen> CodeGenerator<'gen> {
                 Some(res)
             }
             TypedExpression {
-                ty,
+                ty: _,
                 expr: TypedExpressionData::UnaryOp { expr, op },
             } => match op {
                 Operator::Plus => self.codegen_expression(expr, local_ctx.clone())?,
@@ -327,23 +404,24 @@ impl<'gen> CodeGenerator<'gen> {
                 Operator::Not => todo!(),
                 _ => return Err(format!("Invalid unary operator: {:?}", op).into()),
             },
+
             TypedExpression {
-                ty,
+                ty: _,
                 expr: TypedExpressionData::Identifier { name },
             } => Some(self.codegen_identifier(name, local_ctx)?),
             TypedExpression {
-                ty,
+                ty: _,
                 expr: TypedExpressionData::Literal { literal },
             } => Some(self.codegen_literal(literal, local_ctx)?),
             TypedExpression {
-                ty,
+                ty: _,
                 expr: TypedExpressionData::If { expr },
             } => {
                 let TypedIfExpression {
                     condition,
                     body,
                     else_body,
-                    yield_ty,
+                    result_ty: _,
                 } = expr;
 
                 let Some(condition) = self.codegen_expression(condition, local_ctx.clone())? else {
@@ -354,7 +432,7 @@ impl<'gen> CodeGenerator<'gen> {
                     return Err("Expected function".into());
                 };
 
-                let mut entry_block = self.ctx.ir_builder.get_insert_block().unwrap();
+                let entry_block = self.ctx.ir_builder.get_insert_block().unwrap();
 
                 let then_block = self.ctx.llvm_ctx.append_basic_block(func, "then");
 
@@ -368,7 +446,6 @@ impl<'gen> CodeGenerator<'gen> {
                     then_block,
                     else_block,
                 );
-                entry_block = self.ctx.ir_builder.get_insert_block().unwrap();
 
                 self.ctx.ir_builder.position_at_end(then_block);
                 let then_result = self.codegen_expression(body, local_ctx.clone())?;
@@ -387,27 +464,14 @@ impl<'gen> CodeGenerator<'gen> {
                     None
                 };
 
-                /* let (else_result, else_block) = if let Some(else_body) = else_body.as_ref() {
-                    self.ctx.ir_builder.position_at_end(else_block);
-                    let else_result = self.codegen_expression(else_body, local_ctx)?;
-                    self.ctx.ir_builder.build_unconditional_branch(end_block);
-                    let else_block = self.ctx.ir_builder.get_insert_block().unwrap();
-                    (else_result, else_block)
-                } else {
-                    (None, else_block)
-                }; */
-
-                println!(
-                    "then: {:?}\nelse: {:?}\nend: {:?}\n",
-                    then_block, else_block, end_block
-                );
-
                 self.ctx.ir_builder.position_at_end(end_block);
                 let res = if let Some(ty) = &body.ty {
-                    let phi = self
-                        .ctx
-                        .ir_builder
-                        .build_phi(self.ctx.to_llvm_basic_ty(&ty.sig())?, "if_result");
+                    let phi = self.ctx.ir_builder.build_phi(
+                        self.ctx
+                            .to_llvm_ty(&ty.sig(), &local_ctx.structs)?
+                            .basic()?,
+                        "if_result",
+                    );
                     phi.add_incoming(&[
                         (&then_result.unwrap(), then_block),
                         (&else_result.unwrap(), else_block),
@@ -422,7 +486,7 @@ impl<'gen> CodeGenerator<'gen> {
                 res
             }
             TypedExpression {
-                ty,
+                ty: _,
                 expr: TypedExpressionData::Block { block },
             } => {
                 let mut res = None;
@@ -433,21 +497,30 @@ impl<'gen> CodeGenerator<'gen> {
                 res
             }
             TypedExpression {
-                ty,
+                ty: _,
                 expr: TypedExpressionData::VarAssignment { var_assign },
             } => Some(self.codegen_var_assignment(var_assign, local_ctx)?),
             TypedExpression {
-                ty,
+                ty: _,
                 expr: TypedExpressionData::FnCall { fn_call },
             } => self.codegen_fn_call(fn_call, local_ctx)?,
             TypedExpression {
-                ty,
+                ty: _,
                 expr: TypedExpressionData::MemberAccess { member_access },
             } => Some(self.codegen_member_access(member_access, local_ctx)?),
             TypedExpression {
-                ty,
+                ty: _,
                 expr: TypedExpressionData::StructInitializer { struct_init },
             } => Some(self.codegen_struct_init(struct_init, local_ctx)?),
+            TypedExpression {
+                ty: _,
+                expr: TypedExpressionData::SizeOfExpr { ty },
+            } => {
+                let Some(size) = self.ctx.to_llvm_ty(&ty.sig(), &local_ctx.structs)?.basic()?.size_of() else {
+                    return Err("Expected size".into());
+                };
+                Some(size.as_basic_value_enum())
+            }
         };
         Ok(res)
     }
@@ -457,10 +530,11 @@ impl<'gen> CodeGenerator<'gen> {
         literal: &'gen TypedLiteral<'gen>,
         local_ctx: LocalCodegenContext<'gen>,
     ) -> Result<BasicValueEnum<'gen>, Box<dyn Error>> {
+        debug!("generator::CodeGenerator::codegen_literal");
         let t = match literal {
             TypedLiteral {
-                ty,
-                literal: Literal::Str(s, pos),
+                ty: _,
+                literal: Literal::Str(s, _pos),
             } => {
                 let s = self
                     .ctx
@@ -474,9 +548,11 @@ impl<'gen> CodeGenerator<'gen> {
                 literal: Literal::Int(i, pos),
             } => {
                 let Some(ty) = local_ctx.get_base_type(&ty.sig()) else {
-                    return Err(format!("Type not found: {:?} {}:{}", ty, file!(), line!()).into());
+                    return Err(format!("Type not found: {:?} {}", ty, pos).into());
                 };
-                let ty = ty.clone().borrow_mut().llvm_ty.clone();
+                let Some(ty) = ty.clone().borrow_mut().llvm_ty.clone() else {
+                    return Err(format!("Type not found: {:?} {}", ty, pos).into());
+                };
                 let (value, sign) = if *i < 0 {
                     (i.abs() as u64, true)
                 } else {
@@ -490,23 +566,27 @@ impl<'gen> CodeGenerator<'gen> {
                 literal: Literal::Float(f, pos),
             } => {
                 let Some(ty) = local_ctx.get_base_type(&ty.sig()) else {
-                    return Err(format!("Type not found: {:?} {}:{}", ty, file!(), line!()).into());
+                    return Err(format!("Type not found: {:?} {pos}", ty).into());
                 };
-                let ty = ty.clone().borrow_mut().llvm_ty.clone();
+                let Some(ty) = ty.clone().borrow_mut().llvm_ty.clone() else {
+                    return Err(format!("Type not found: {:?} {}", ty, pos).into());
+                };
                 ty.float_type()?.const_float(*f).as_basic_value_enum()
             }
             TypedLiteral {
-                ty,
-                literal: Literal::Char(c, pos),
+                ty: _,
+                literal: Literal::Char(_c, _pos),
             } => todo!(),
             TypedLiteral {
                 ty,
                 literal: Literal::Bool(b, pos),
             } => {
                 let Some(ty) = local_ctx.get_base_type(&ty.sig()) else {
-                    return Err(format!("Type not found: {:?} {}:{}", ty, file!(), line!()).into());
+                    return Err(format!("Type not found: {:?} {}", ty, pos).into());
                 };
-                let ty = ty.clone().borrow_mut().llvm_ty.clone();
+                let Some(ty) = ty.clone().borrow_mut().llvm_ty.clone() else {
+                    return Err(format!("Type not found: {:?} {}", ty, pos).into());
+                };
 
                 ty.int_type()?
                     .const_int(*b as u64, false)
@@ -516,50 +596,12 @@ impl<'gen> CodeGenerator<'gen> {
         Ok(t)
     }
 
-    fn codegen_struct(
-        &self,
-        structure: &'gen TypedStructDeclaration<'gen>,
-        local_ctx: &mut LocalCodegenContext<'gen>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let TypedStructDeclaration { name, fields, ty } = structure;
-        let structure = self.ctx.llvm_ctx.opaque_struct_type(name);
-        let fields = fields
-            .iter()
-            .map(|f| {
-                let sig = f.ty.sig();
-                let basic = self.ctx.to_llvm_basic_ty(&sig);
-                basic
-            })
-            .collect::<Result<Vec<_>, String>>()?;
-        let fields_slice = fields.as_slice();
-        structure.set_body(fields_slice, false);
-
-        local_ctx.types.insert(
-            ty.sig(),
-            Rc::new(CodegenType {
-                name: name.clone(),
-                ty: ty.sig(),
-                llvm_ty: CodegenLLVMType::Basic(structure.as_basic_type_enum()),
-            }),
-        );
-
-        // add struct to context
-
-        /* let Some(s) = self.ctx.llvm_ctx.get_struct_type(name) else {
-            return Err(format!("Type not found: {:?} {}:{}", ty, file!(), line!()).into());
-        }; */
-
-        // add struct to module
-        /* self.ctx.llvm_module.get_struct_type(name); */
-
-        Ok(())
-    }
-
     fn codegen_return_statement(
         &self,
         ret_stmt: &'gen TypedReturnStatement<'gen>,
         local_ctx: LocalCodegenContext<'gen>,
     ) -> Result<(), Box<dyn Error>> {
+        debug!("generator::CodeGenerator::codegen_return_statement");
         if let Some(ret_val) = &ret_stmt.value {
             let val = self.codegen_expression(ret_val, local_ctx.clone())?;
             match val {
@@ -582,6 +624,7 @@ impl<'gen> CodeGenerator<'gen> {
         name: &str,
         local_ctx: LocalCodegenContext<'gen>,
     ) -> Result<BasicValueEnum<'gen>, Box<dyn Error>> {
+        debug!("generator::CodeGenerator::codegen_identifier");
         let Some(name) = local_ctx.get_name(name) else {
             return Err(format!("Name not found: {}", name).into());
         };
@@ -614,6 +657,7 @@ impl<'gen> CodeGenerator<'gen> {
         var_assign: &'gen TypedVarAssignment<'gen>,
         local_ctx: LocalCodegenContext<'gen>,
     ) -> Result<BasicValueEnum<'gen>, Box<dyn Error>> {
+        debug!("generator::CodeGenerator::codegen_var_assignment");
         match &var_assign.left.expr {
             TypedExpressionData::Identifier { name } => {
                 let right = self.codegen_expression(&var_assign.right, local_ctx.clone())?;
@@ -629,11 +673,15 @@ impl<'gen> CodeGenerator<'gen> {
                 let alloc = if let Some(alloc) = name.alloc {
                     alloc
                 } else {
+                    let Some(llvm_ty) = &name.ty.llvm_ty else {
+                        return Err(format!("LLVM type not found: {}", &name.name).into());
+                    };
                     self.ctx
                         .ir_builder
-                        .build_alloca(name.ty.llvm_ty.basic()?, &name.name)
+                        .build_alloca(llvm_ty.basic()?, &name.name)
                 };
 
+                debugln!();
                 self.ctx.ir_builder.build_store(alloc, right);
                 let load = self.ctx.ir_builder.build_load(alloc, &name.name);
                 Ok(load)
@@ -642,83 +690,226 @@ impl<'gen> CodeGenerator<'gen> {
                 let TypedMemberAccess {
                     object,
                     member,
-                    computed,
+                    computed: _,
                 } = member_access;
+                // TODO: Handle computed member access expressions and array access expressions
+                let Some(member_ty) = &member.ty else {
+                    return Err("Member type is None".into());
+                };
+                let _member_sig = member_ty.sig();
 
-                let mut members = vec![member];
-                let mut curr_obj = object;
-                while let TypedExpressionData::MemberAccess { member_access } = &curr_obj.expr {
-                    let TypedMemberAccess {
-                        object,
-                        member,
-                        computed,
-                    } = member_access;
-                    members.push(member);
-                    curr_obj = object;
-                }
-                let var = if let TypedExpressionData::Identifier { name } = &curr_obj.expr {
-                    let Some(var) = local_ctx.get_name(&name) else {
-                        return Err(format!("Name not found: {}", &name).into());
-                    };
-                    var
-                } else {
-                    return Err("generator.rs:520 Invalid member access".into());
+                let TypedExpressionData::Identifier { name: member_name } = &member.expr else {
+                    return Err("Member name is None".into());
                 };
 
-                let Some(alloc) = var.alloc else {
-                    return Err(format!("Name alloc not found: {}", var.name).into());
+                let Some(object_ty) = &object.ty else {
+                    return Err("Object type is None".into());
                 };
+                let object_sig = object_ty.sig();
 
-                let mut curr_obj = alloc;
-
-                for member in members {
-                    let TypedExpressionData::Identifier { name } = &member.expr else {
-                        return Err("generator.rs:528 Invalid member access".into());
-                    };
-                    let ty = var.ty.to_struct_type()?;
-                    let Some(field) = ty.fields.get(name) else {
-                        return Err(format!("Field not found: {}", name).into());
-                    };
-                    let Ok(gep) =
-                        self.ctx
-                            .ir_builder
-                            .build_struct_gep(curr_obj, field.idx, &field.name) else {
-                                return Err(format!("GEP not found: {}", field.name).into());
-                            };
-                    curr_obj = gep;
-                }
-
-                let right = self.codegen_expression(&var_assign.right, local_ctx.clone())?;
-                let Some(right) = right else {
+                let Some(right) = self.codegen_expression(&var_assign.right, local_ctx.clone())? else {
                     return Err("Right side of assignment is None".into());
                 };
-                println!("E1");
-                self.ctx.ir_builder.build_store(curr_obj, right);
-                println!("E2");
-                let load = self.ctx.ir_builder.build_load(alloc, "var_assign_result");
-                println!("E3");
-                Ok(load)
+
+                let Some(object) = self.codegen_expression(object, local_ctx.clone())? else {
+                    return Err("Object is None".into());
+                };
+
+                let TypeSignature::Struct(id) = object_sig else {
+                    return Err(format!("Object type is not a struct: {:#?}", object_sig).into());
+                };
+                let Some(struct_t) = local_ctx.structs.get(&id) else {
+                    return Err(format!("var_assign: Struct not found: {1} {0}", line!() , id).into());
+                };
+
+                let Some(member_idx) = struct_t.get_member_idx(&member_name) else {
+                    return Err(format!("Member not found: {1} {0}", line!() , member_name).into());
+                };
+
+                let Some(member_ptr) = self.ctx.ir_builder.build_struct_gep(
+                    object.into_pointer_value(),
+                    member_idx,
+                    (struct_t.name.clone() + "." + member_name).as_str(),
+                ).ok() else {
+                    return Err("Member pointer is None".into());
+                };
+
+                debugln!();
+                let _store = self.ctx.ir_builder.build_store(member_ptr, right);
+
+                Ok(member_ptr.as_basic_value_enum())
             }
-            TypedExpressionData::UnaryOp { expr, op } => {
+            TypedExpressionData::UnaryOp { expr, op: _ } => {
                 // left hand side dereference
                 let Some(right) = self.codegen_expression(&var_assign.right, local_ctx.clone())? else {
                     return Err("Right side of assignment is None".into());
                 };
 
-                let Some(left) = self.codegen_expression(&expr, local_ctx.clone())? else {
+                let Some(left) = self.codegen_lhs_expression(expr.as_ref(), local_ctx)? else {
                     return Err("Left side of assignment is None".into());
                 };
 
-                self.ctx
-                    .ir_builder
-                    .build_store(left.into_pointer_value(), right);
-                let load = self
-                    .ctx
-                    .ir_builder
-                    .build_load(left.into_pointer_value(), "deref_assign_result");
+                let Some(size) = right.get_type().size_of() else {
+                    return Err("Size of right is None".into());
+                };
+
+                if let BasicValueEnum::PointerValue(p) = right {
+                    if p.is_const() {
+                        self.ctx.ir_builder.build_memcpy(
+                            left,
+                            64,
+                            right.into_pointer_value(),
+                            64,
+                            size,
+                        )?;
+                        println!("after 2");
+                        let load = self.ctx.ir_builder.build_load(left, "deref_assign_result");
+                        return Ok(load);
+                    }
+                }
+                println!("left: {:#?}", left);
+                println!("right: {:#?}", right);
+                self.ctx.ir_builder.build_store(left, right);
+                let load = self.ctx.ir_builder.build_load(left, "deref_assign_result");
                 Ok(load)
             }
             _ => return Err("Invalid left side of assignment".into()),
+        }
+    }
+
+    pub(crate) fn codegen_lhs_expression(
+        &self,
+        expr: &'gen TypedExpression<'gen>,
+        local_ctx: LocalCodegenContext<'gen>,
+    ) -> Result<Option<PointerValue<'gen>>, Box<dyn Error>> {
+        debug!("generator::CodeGenerator::codegen_lhs_expression");
+        match &expr.expr {
+            TypedExpressionData::UnaryOp { expr, op } => {
+                /* let Some(val) = self.codegen_expression(expr, local_ctx.clone())? else {
+                    return Err("Invalid left side of assignment".into());
+                }; */
+
+                match op {
+                    Operator::Times => Ok(self.codegen_lhs_expression(expr, local_ctx)?), //Ok(Some(val.into_pointer_value())),
+                    _ => Err("Invalid left side of assignment".into()),
+                }
+            }
+            TypedExpressionData::Identifier { name: _name } => {
+                /* let Some(name) = local_ctx.get_name(&name) else {
+                    return Err(format!("Name not found: {}", &name).into());
+                };
+                let name = name.clone();
+
+                let alloc = if let Some(alloc) = name.alloc {
+                    alloc
+                } else {
+                    self.ctx
+                        .ir_builder
+                        .build_alloca(name.ty.llvm_ty.pointer_type()?, &name.name)
+                };
+
+                let alloc = self
+                    .ctx
+                    .ir_builder
+                    .build_load(alloc, &name.name)
+                    .into_pointer_value();
+
+                Ok(Some(alloc)) */
+                let Some(val) = self.codegen_expression(&expr, local_ctx)? else {
+                    return Err("Expression is None".into());
+                };
+                Ok(Some(val.into_pointer_value()))
+            }
+            TypedExpressionData::MemberAccess { member_access } => {
+                let val = self.codegen_lhs_member_access(member_access, local_ctx)?;
+                Ok(Some(val.into_pointer_value()))
+            }
+            /* Ok(Some(
+                self.codegen_member_access(member_access, local_ctx)?
+                    .into_pointer_value(),
+            )) */,
+            _ => Err("Invalid left side of assignment".into()),
+        }
+    }
+
+    fn codegen_lhs_member_access(
+        &self,
+        member_access: &'gen TypedMemberAccess<'gen>,
+        local_ctx: LocalCodegenContext<'gen>,
+    ) -> Result<BasicValueEnum<'gen>, Box<dyn Error>> {
+        debug!("generator::CodeGenerator::codegen_lhs_member_access");
+        let TypedMemberAccess {
+            object,
+            member,
+            computed: _,
+        } = member_access;
+
+        let Some(object_type) = &object.ty else {
+            return Err("Object type is None".into());
+        };
+        let object_type = object_type.sig();
+        let Some(object) = self.codegen_expression(object, local_ctx.clone())? else {
+            return Err("Object is None".into());
+        };
+
+        match &object_type {
+            TypeSignature::Primitive(_primitive) => todo!(),
+            TypeSignature::Struct(id) => {
+                let member = (*member).clone();
+                match member.expr {
+                    TypedExpressionData::Identifier { name } => {
+                        let structure = local_ctx.structs.get(id).ok_or_else(|| {
+                            format!("Struct not found: {}:{}:{}", file!(), line!(), id)
+                        })?;
+                        let Some(member_idx) = structure.get_member_idx(&name) else {
+                            return Err(format!("Member not found: {}", &name).into());
+                        };
+                        let Some(member) = self.ctx.ir_builder.build_extract_value(
+                            object.into_struct_value(),
+                            member_idx,
+                            name.as_str(),
+                        ) else {
+                            return Err("Member is None".into());
+                        };
+                        Ok(member)
+                    }
+                    _ => todo!(),
+                }
+            }
+            TypeSignature::Function(_function) => todo!(),
+            TypeSignature::Pointer(pointer) => {
+                let member = (*member).clone();
+                let target = pointer.target.as_ref();
+                if let TypeSignature::Struct(id) = target {
+                    let s = local_ctx.structs.get(id).ok_or_else(|| {
+                        format!(
+                            "member_access_ptr: Struct not found: {}:{}:{}",
+                            file!(),
+                            line!(),
+                            id
+                        )
+                    })?;
+                    match member.expr {
+                        TypedExpressionData::Identifier { name } => {
+                            let Some(member_idx) = s.get_member_idx(&name) else {
+                                return Err(format!("Member not found: {}", &name).into());
+                            };
+                            let Some(member) = self.ctx.ir_builder.build_struct_gep(
+                                object.into_pointer_value(),
+                                member_idx,
+                                (s.name.clone() + "." + &name).as_str(),
+                            ).ok() else {
+                                return Err("Member is None".into());
+                            };
+                            Ok(member.as_basic_value_enum())
+                        }
+                        _ => todo!(),
+                    }
+                } else {
+                    todo!("codegen_member_access")
+                }
+            }
+            _ => unreachable!(),
         }
     }
 
@@ -727,9 +918,10 @@ impl<'gen> CodeGenerator<'gen> {
         fn_call: &'gen TypedFunctionCall<'gen>,
         local_ctx: LocalCodegenContext<'gen>,
     ) -> Result<Option<BasicValueEnum<'gen>>, Box<dyn Error>> {
+        debug!("generator::CodeGenerator::codegen_fn_call");
         let callee = match *fn_call.callee.clone() {
             TypedExpression {
-                ty,
+                ty: _,
                 expr: TypedExpressionData::Identifier { name },
             } => name,
             _ => unreachable!(),
@@ -775,6 +967,7 @@ impl<'gen> CodeGenerator<'gen> {
         op: &Operator,
         local_ctx: LocalCodegenContext<'gen>,
     ) -> Result<BasicValueEnum<'gen>, Box<dyn Error>> {
+        debug!("generator::CodeGenerator::codegen_binary_op");
         let left = self.codegen_expression(left, local_ctx.clone())?;
         let right = self.codegen_expression(right, local_ctx.clone())?;
         let Some(left) = left else {
@@ -809,34 +1002,39 @@ impl<'gen> CodeGenerator<'gen> {
         struct_init: &'gen TypedStructInitializer<'gen>,
         local_ctx: LocalCodegenContext<'gen>,
     ) -> Result<BasicValueEnum<'gen>, Box<dyn Error>> {
-        let struct_ty = &struct_init.struct_ty;
+        debug!("generator::CodeGenerator::codegen_struct_init");
+        /* let struct_ty = &struct_init.struct_ty;
         let sig = struct_ty.sig();
         let Some(struct_ty) = local_ctx.get_base_type(&sig) else {
             return Err(format!("Type not found {}:{}", file!(), line!()).into());
+        }; */
+        let Some(struct_ty) = local_ctx.get_type_by_name(&struct_init.struct_name.clone()) else {
+            return Err("Struct type not found".into());
         };
+        println!("STRUCT TY: {:?}", struct_ty);
 
         let mut values = Vec::new();
-        for (i, field) in struct_init.fields.iter().enumerate() {
+        for field in struct_init.fields.iter() {
             let Some(field) = self.codegen_expression(&field.value, local_ctx.clone())? else {
                 return Err("Field is None".into());
             };
             values.push(field);
         }
 
-        /* let init = match self.ctx.llvm_ctx.get_struct_type(&struct_ty.name) {
-            Some(s) => s,
-            None => struct_ty.llvm_ty.struct_type()?,
-        }; */
-        /* self.ctx.llvm_module.get_context().
-        let init = self.ctx.llvm_ctx.const_struct(values.as_slice(), false); */
-        //let init = struct_ty.llvm_ty.struct_type()?;
+        let Some(llvm_ty) = &struct_ty.llvm_ty else {
+            return Err("Invalid struct type".into());
+        };
+        println!("LLVM TY: {:?}", llvm_ty);
+        let init = llvm_ty.struct_type()?.const_named_struct(values.as_slice());
+        let global = self.ctx.llvm_module.add_global(
+            llvm_ty.struct_type()?,
+            Some(AddressSpace::Generic),
+            (struct_init.struct_name.clone() + ".init").as_str(),
+        );
+        global.set_initializer(&init);
+        global.set_constant(true);
 
-        let init = struct_ty
-            .llvm_ty
-            .struct_type()?
-            .const_named_struct(values.as_slice());
-
-        Ok(init.as_basic_value_enum())
+        Ok(global.as_pointer_value().as_basic_value_enum())
     }
 
     fn codegen_member_access(
@@ -844,6 +1042,85 @@ impl<'gen> CodeGenerator<'gen> {
         member_access: &'gen TypedMemberAccess<'gen>,
         local_ctx: LocalCodegenContext<'gen>,
     ) -> Result<BasicValueEnum<'gen>, Box<dyn Error>> {
+        debug!("generator::CodeGenerator::codegen_member_access");
+        let TypedMemberAccess {
+            object,
+            member,
+            computed: _,
+        } = member_access;
+
+        let Some(object_type) = &object.ty else {
+            return Err("Object type is None".into());
+        };
+        let object_type = object_type.sig();
+        let Some(object) = self.codegen_expression(object, local_ctx.clone())? else {
+            return Err("Object is None".into());
+        };
+
+        match &object_type {
+            TypeSignature::Primitive(_primitive) => todo!(),
+            TypeSignature::Struct(id) => {
+                let member = (*member).clone();
+                match member.expr {
+                    TypedExpressionData::Identifier { name } => {
+                        let structure = local_ctx.structs.get(id).ok_or_else(|| {
+                            format!("Struct not found: {}:{}:{}", file!(), line!(), id)
+                        })?;
+                        let Some(member_idx) = structure.get_member_idx(&name) else {
+                            return Err(format!("Member not found: {}", &name).into());
+                        };
+                        let Some(member) = self.ctx.ir_builder.build_extract_value(
+                            object.into_struct_value(),
+                            member_idx,
+                            name.as_str(),
+                        ) else {
+                            return Err("Member is None".into());
+                        };
+                        Ok(member)
+                    }
+                    _ => todo!(),
+                }
+            }
+            TypeSignature::Function(_function) => todo!(),
+            TypeSignature::Pointer(pointer) => {
+                let member = (*member).clone();
+                let target = pointer.target.as_ref();
+                if let TypeSignature::Struct(id) = target {
+                    let s = local_ctx.structs.get(id).ok_or_else(|| {
+                        format!(
+                            "member_access_ptr: Struct not found: {}:{}:{}",
+                            file!(),
+                            line!(),
+                            id
+                        )
+                    })?;
+                    match member.expr {
+                        TypedExpressionData::Identifier { name } => {
+                            let Some(member_idx) = s.get_member_idx(&name) else {
+                                return Err(format!("Member not found: {}", &name).into());
+                            };
+                            let Some(member) = self.ctx.ir_builder.build_struct_gep(
+                                object.into_pointer_value(),
+                                member_idx,
+                                name.as_str(),
+                            ).ok() else {
+                                return Err("Member is None".into());
+                            };
+                            Ok(member.as_basic_value_enum())
+                        }
+                        _ => todo!(),
+                    }
+                } else {
+                    todo!("codegen_member_access")
+                }
+            }
+            _ => unreachable!(),
+        }
+
+        //
+        //
+
+        /*
         /* let object = self.codegen_expression(&member_access.object, local_ctx.clone())?;
         let Some(object) = object else {
             return Err("Object is None".into());
@@ -859,7 +1136,7 @@ impl<'gen> CodeGenerator<'gen> {
                         match member.expr {
                             TypedExpressionData::Identifier { name } => {
                                 let Some(member) = s.fields.get(&name) else {
-                                    return Err(format!("Member not found: {}", &name).into());
+                                    return Err(format!("Member not found: {1} {0}", line!() , &name).into());
                                 };
                                 //let member_ty = member.ty.sig();
                                 /* let Some(member_ty) = local_ctx.get_type(&member_ty) else {
@@ -879,7 +1156,7 @@ impl<'gen> CodeGenerator<'gen> {
                                     .ir_builder
                                     .build_struct_gep(alloc, member.idx, &member.name)
                                     .ok() else {
-                                        return Err(format!("Member not found").into());
+                                        return Err(format!("Member not found ({0})", line!() ).into());
                                     };
                                 //let load = self.ctx.ir_builder.build_load(get_member, &member.name);
                                 Ok(get_member.as_basic_value_enum())
@@ -887,19 +1164,51 @@ impl<'gen> CodeGenerator<'gen> {
                             _ => unreachable!(),
                         }
                     }
+                    TypeSignature::Pointer(p) => {
+                        let target = &p.target;
+                        match target.as_ref() {
+                            TypeSignature::Struct(Some(s)) => {
+                                let member = (*member_access.member).clone();
+                                match member.expr {
+                                    TypedExpressionData::Identifier { name } => {
+                                        println!("Struct: {:?}", s);
+                                        println!("Member access: {}", name);
+                                        let Some(member) = s.fields.get(&name) else {
+                                            return Err(format!("Codegen error: Member not found: {}", &name).into());
+                                        };
+                                        //let member_ty = member.ty.sig();
+                                        /* let Some(member_ty) = local_ctx.get_type(&member_ty) else {
+                                            return Err(format!("Type not found").into());
+                                        };
+                                        let Some(member_reg) = local_ctx.names.get(&name) else {
+                                            return Err(format!("Name not found").into());
+                                        }; */
+                                        let alloc = if let Some(alloc) = object_reg.alloc {
+                                            alloc
+                                        } else {
+                                            return Err(format!("Name not allocated").into());
+                                        };
+
+                                        /* let Some(get_member) = self
+                                        .ctx
+                                        .ir_builder
+                                        .build_struct_gep(alloc, member.idx, &member.name)
+                                        .ok() else {
+                                            return Err(format!("Failed to build GEP ({0})", line!() ).into());
+                                        }; */
+                                        let get_member = alloc;
+                                        //let load = self.ctx.ir_builder.build_load(get_member, &member.name);
+                                        Ok(get_member.as_basic_value_enum())
+                                    }
+                                    _ => unreachable!(),
+                                }
+                            }
+                            _ => todo!(),
+                        }
+                        //todo!()
+                    }
                     _ => unreachable!(),
                 }
-
-                /* let alloc = if let Some(alloc) = name.alloc {
-                    alloc
-                } else {
-                    self.ctx
-                        .ir_builder
-                        .build_alloca(to_basic(name.ty.llvm_ty)?, &name.name)
-                };
-
-                let load = self.ctx.ir_builder.build_load(alloc, &name.name);
-                Ok(load) */
             }
             TypedExpressionData::MemberAccess {
                 member_access: obj_member_access,
@@ -911,7 +1220,7 @@ impl<'gen> CodeGenerator<'gen> {
                     return Err("Type is None".into());
                 };
                 let sig = ty.sig();
-                let Some(ty) = local_ctx.get_base_type(&sig) else {
+                let Some(_ty) = local_ctx.get_base_type(&sig) else {
                     return Err(format!("Type not found {}:{}", file!(), line!()).into());
                 };
                 if let TypeSignature::Struct(Some(s)) = sig {
@@ -919,23 +1228,16 @@ impl<'gen> CodeGenerator<'gen> {
                     match member.expr {
                         TypedExpressionData::Identifier { name } => {
                             let Some(member) = s.fields.get(&name) else {
-                                return Err(format!("Member not found: {}", &name).into());
+                                return Err(format!("Member not found: {1} {0}", line!() , &name).into());
                             };
-                            //let member_ty = member.ty.sig();
-                            /* let Some(member_ty) = local_ctx.get_type(&member_ty) else {
-                                return Err(format!("Type not found").into());
-                            };
-                            let Some(member_reg) = local_ctx.names.get(&name) else {
-                                return Err(format!("Name not found").into());
-                            }; */
+
                             let Some(get_member) = self
                                 .ctx
                                 .ir_builder
                                 .build_struct_gep(obj_access.into_pointer_value(), member.idx, &member.name)
                                 .ok() else {
-                                    return Err(format!("Member not found").into());
+                                    return Err(format!("Member not found ({0})", line!() ).into());
                                 };
-                            //let load = self.ctx.ir_builder.build_load(get_member, &member.name);
                             Ok(get_member.as_basic_value_enum())
                         }
                         _ => unreachable!(),
@@ -946,14 +1248,16 @@ impl<'gen> CodeGenerator<'gen> {
             }
             _ => unimplemented!(),
         }
+        */
     }
 
-    fn codegen_yield_statement(
+    fn codegen_result_statement(
         &self,
-        yield_stmt: &'gen TypedYieldStatement<'gen>,
+        result_stmt: &'gen TypedResultStatement<'gen>,
         local_ctx: LocalCodegenContext<'gen>,
     ) -> Result<BasicValueEnum<'gen>, Box<dyn Error>> {
-        let value = self.codegen_expression(&yield_stmt.value, local_ctx.clone())?;
+        debug!("generator::CodeGenerator::codegen_result_statement");
+        let value = self.codegen_expression(&result_stmt.value, local_ctx.clone())?;
         let Some(value) = value else {
             return Err("Value is None".into());
         };

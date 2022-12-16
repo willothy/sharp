@@ -120,6 +120,7 @@ pub enum Keyword {
     Impl,
     Self_,
     As,
+    SizeOf,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -267,7 +268,8 @@ pub enum Symbol {
     Colon,
     Comma,
     Dot,
-    Arrow,
+    RightArrow,
+    LeftArrow,
     Ellipsis,
 }
 
@@ -288,6 +290,7 @@ fn keyword<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
         tag("as"),
         tag("self"),
         tag("impl"),
+        tag("sizeof"),
     ))(input)
     {
         Ok((input, keyword)) => Ok((
@@ -308,6 +311,7 @@ fn keyword<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
                 "as" => TokenKind::Keyword(Keyword::As),
                 "self" => TokenKind::Keyword(Keyword::Self_),
                 "impl" => TokenKind::Keyword(Keyword::Impl),
+                "sizeof" => TokenKind::Keyword(Keyword::SizeOf),
                 _ => {
                     return Err(Err::Error(nom::error::Error::new(
                         input,
@@ -415,6 +419,7 @@ fn symbol<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
         tag(","),
         tag("."),
         tag("->"),
+        tag("<-"),
     ))(input)
     {
         Ok((input, symbol)) => Ok((
@@ -431,7 +436,8 @@ fn symbol<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
                 "," => TokenKind::Symbol(Symbol::Comma),
                 "." => TokenKind::Symbol(Symbol::Dot),
                 "..." => TokenKind::Symbol(Symbol::Ellipsis),
-                "->" => TokenKind::Symbol(Symbol::Arrow),
+                "->" => TokenKind::Symbol(Symbol::RightArrow),
+                "<-" => TokenKind::Symbol(Symbol::LeftArrow),
                 _ => {
                     return Err(Err::Error(nom::error::Error::new(
                         input,

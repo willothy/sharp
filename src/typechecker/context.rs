@@ -2,21 +2,25 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::ast;
 
-use super::type_sig::{Name, PointerType, PrimitiveType, Type, TypeSignature};
+use super::type_sig::{Name, PointerType, PrimitiveType, StructType, Type, TypeSignature};
+
+pub type TypeId = usize;
 
 #[derive(Debug, Clone)]
 pub struct TypeCheckContext<'ctx> {
     pub names: HashMap<String, Name<'ctx>>,
     pub types: HashMap<String, TypeRef<'ctx>>,
+    pub structs: HashMap<TypeId, StructType<'ctx>>,
     pub submodules: HashMap<String, TypeCheckContext<'ctx>>,
     pub primitives: HashMap<String, TypeRef<'ctx>>,
+    pub last_struct_id: TypeId,
 }
 
 #[derive(Debug, Clone)]
 pub struct LocalTypecheckContext<'ctx> {
     pub names: HashMap<String, Name<'ctx>>,
     pub return_type: Option<TypeRef<'ctx>>,
-    pub yield_type: Option<TypeRef<'ctx>>,
+    pub result_type: Option<TypeRef<'ctx>>,
     pub in_loop: bool,
 }
 
@@ -25,7 +29,7 @@ impl<'ctx> From<&TypeCheckContext<'ctx>> for LocalTypecheckContext<'ctx> {
         Self {
             names: ctx.names.clone(),
             return_type: None,
-            yield_type: None,
+            result_type: None,
             in_loop: false,
         }
     }
@@ -36,14 +40,14 @@ impl<'ctx> LocalTypecheckContext<'ctx> {
         Self {
             names: HashMap::new(),
             return_type: None,
-            yield_type: None,
+            result_type: None,
             in_loop: false,
         }
     }
 
-    pub fn with_yield(&self, ty: Option<TypeRef<'ctx>>) -> Self {
+    pub fn expect_result(&self, ty: Option<TypeRef<'ctx>>) -> Self {
         let mut new = self.clone();
-        new.yield_type = ty;
+        new.result_type = ty;
         new
     }
 }
@@ -65,8 +69,10 @@ impl<'ctx> TypeCheckContext<'ctx> {
         let mut ctx = Self {
             names: HashMap::new(),
             types: HashMap::new(),
+            structs: HashMap::new(),
             submodules: HashMap::new(),
             primitives: HashMap::new(),
+            last_struct_id: 0,
         };
         ctx.load_primitives();
         ctx
@@ -114,47 +120,6 @@ impl<'ctx> TypeCheckContext<'ctx> {
             .insert("void".into(), new_type(Type::new(TypeSignature::Void)));
     }
 
-    /* pub fn enter_fn(self, fn_type: TypeRef<'ctx>) -> Self {
-        let mut ctx = self.clone();
-        let fn_type = &*fn_type.borrow_mut();
-        match &fn_type.sig {
-            TypeSignature::Function(func) => {
-                ctx.return_type = match &func.return_type {
-                    Some(return_type) => Some(return_type.clone()),
-                    None => None,
-                };
-                for param in func.params.values() {
-                    ctx.names.insert(
-                        param.name.clone(),
-                        Name {
-                            ty: param.ty.clone(),
-                        },
-                    );
-                }
-            }
-            _ => panic!("Expected function type"),
-        };
-
-        ctx
-    }
-
-    pub fn exit_fn(self) -> Self {
-        let mut ctx = self;
-        ctx.return_type = None;
-        ctx
-    }
-
-    pub fn allow_yield(&mut self, yield_type: TypeRef<'ctx>) -> &mut Self {
-        self.yield_type = Some(yield_type);
-        self
-    }
-
-    pub fn disallow_yield(self) -> Self {
-        let mut ctx = self;
-        ctx.yield_type = None;
-        ctx
-    } */
-
     pub fn get_type(&self, type_name: String) -> Result<TypeRef<'ctx>, String> {
         let mut ptr_dim = 0;
         for c in type_name.chars() {
@@ -164,38 +129,69 @@ impl<'ctx> TypeCheckContext<'ctx> {
                 break;
             }
         }
-        let type_name = type_name[ptr_dim..].to_string();
-        let sig = if let Some(t) = self.primitives.get(&type_name) {
-            t.sig()
-        } else {
-            match self.types.get(&type_name) {
-                Some(type_) => type_.sig(),
-                None => {
-                    return Err(format!(
-                        "{} is not a valid type {}:{}",
-                        type_name,
-                        file!(),
-                        line!()
-                    ))
-                }
+
+        let base_name = type_name[ptr_dim..].to_string();
+
+        if ptr_dim == 0 {
+            if let Some(t) = self.primitives.get(&base_name) {
+                return Ok(t.clone());
             }
-        };
-        let mut new_type_sig = sig;
-        for _ in 0..ptr_dim {
-            new_type_sig = TypeSignature::Pointer(PointerType {
-                target: Box::from(new_type_sig),
-            });
+            let Some(type_) = self.types.get(&base_name.clone()) else {
+                return Err(format!(
+                    "{} is not a valid type {}:{}",
+                    type_name,
+                    file!(),
+                    line!()
+                ))
+            };
+
+            Ok(type_.clone())
+        } else {
+            let base_t = self.get_type(base_name)?;
+            let mut ptr_type = base_t.clone();
+            for _ in 0..ptr_dim {
+                ptr_type = new_type(Type::new(TypeSignature::Pointer(PointerType {
+                    target: Box::from(ptr_type.sig()),
+                })));
+            }
+            Ok(ptr_type)
         }
-        Ok(new_type(Type::new(new_type_sig)))
     }
-}
 
-pub fn box_some<T>(t: T) -> Box<Option<T>> {
-    Box::from(Some(t))
-}
+    pub fn add_type(&mut self, type_name: String, type_: TypeRef<'ctx>) -> Result<(), String> {
+        if self.types.contains_key(&type_name) {
+            return Err(format!(
+                "Type {} already exists {}:{}",
+                type_name,
+                file!(),
+                line!()
+            ));
+        }
+        self.types.insert(type_name, type_);
+        Ok(())
+    }
 
-pub fn box_none<T>() -> Box<Option<T>> {
-    Box::new(None)
+    pub fn update_type(&mut self, type_name: String, type_: TypeRef<'ctx>) -> Result<(), String> {
+        if !self.types.contains_key(&type_name) {
+            return Err(format!(
+                "Type {} does not exist {}:{}",
+                type_name,
+                file!(),
+                line!()
+            ));
+        }
+        self.types.insert(type_name, type_);
+        Ok(())
+    }
+
+    pub fn types(&self) -> impl Iterator<Item = (&String, &TypeRef<'ctx>)> {
+        self.types.iter()
+    }
+
+    pub(crate) fn get_next_struct_id(&mut self) -> usize {
+        self.last_struct_id += 1;
+        self.last_struct_id
+    }
 }
 
 pub fn new_type(t: Type) -> TypeRef {

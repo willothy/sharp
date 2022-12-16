@@ -8,9 +8,13 @@ use inkwell::{
     AddressSpace,
 };
 
-use crate::typechecker::{
-    self,
-    type_sig::{self, FunctionType, PrimitiveType, StructType, TypeSignature},
+use crate::{
+    debug, debugln,
+    typechecker::{
+        self,
+        context::{TypeId, TypeSig},
+        type_sig::{self, FunctionType, PrimitiveType, StructType, TypeSignature},
+    },
 };
 
 pub struct CodegenContext<'ctx> {
@@ -24,8 +28,9 @@ pub struct CodegenContext<'ctx> {
 pub struct LocalCodegenContext<'ctx> {
     pub names: HashMap<String, CodegenName<'ctx>>,
     pub types: HashMap<TypeSignature<'ctx>, Rc<CodegenType<'ctx>>>,
+    pub structs: HashMap<TypeId, StructType<'ctx>>,
     pub return_type: Option<TypeSignature<'ctx>>,
-    pub yield_type: Option<TypeSignature<'ctx>>,
+    pub result_type: Option<TypeSignature<'ctx>>,
     pub current_fn: Option<FunctionValue<'ctx>>,
 }
 
@@ -42,12 +47,17 @@ impl<'ctx> LocalCodegenContext<'ctx> {
         self.types.insert(t.ty.clone(), Rc::from(t));
     }
 
+    pub fn get_type(&self, sig: &TypeSignature<'ctx>) -> Option<&Rc<CodegenType<'ctx>>> {
+        self.types.get(sig)
+    }
+
     pub fn get_base_type(&self, sig: &TypeSignature<'ctx>) -> Option<Rc<CodegenType<'ctx>>> {
         if let TypeSignature::Pointer(p) = sig {
-            let Some(t) = self.get_base_type(&*p.target) else {
+            let Some(t) = self.get_base_type(&p.target) else {
                 return None;
             };
-            let Ok(llvm_ty) = t.llvm_ty.basic() else {
+            Some(t)
+            /* let Ok(llvm_ty) = t.llvm_ty.basic() else {
                 return None;
             };
             let llvm_ty = llvm_ty.ptr_type(AddressSpace::Generic);
@@ -56,9 +66,17 @@ impl<'ctx> LocalCodegenContext<'ctx> {
                 name: "pointer_ty".into(),
                 ty: sig.clone(),
                 llvm_ty,
-            }))
+            })) */
         } else {
             self.types.get(sig).cloned()
+        }
+    }
+
+    pub fn get_ptr_depth(&self, sig: &TypeSignature<'ctx>) -> usize {
+        if let TypeSignature::Pointer(p) = sig {
+            1 + self.get_ptr_depth(&p.target)
+        } else {
+            0
         }
     }
 
@@ -93,48 +111,48 @@ impl<'ctx> CodegenContext<'ctx> {
         local_ctx.add_type(CodegenType::new(
             "i8".into(),
             Primitive(I8),
-            self.llvm_ctx.i8_type().as_basic_type_enum().into(),
+            Some(self.llvm_ctx.i8_type().as_basic_type_enum().into()),
         ));
         local_ctx.add_type(CodegenType::new(
             "i16".into(),
             Primitive(I16),
-            self.llvm_ctx.i16_type().as_basic_type_enum().into(),
+            Some(self.llvm_ctx.i16_type().as_basic_type_enum().into()),
         ));
         local_ctx.add_type(CodegenType::new(
             "i32".into(),
             Primitive(I32),
-            self.llvm_ctx.i32_type().as_basic_type_enum().into(),
+            Some(self.llvm_ctx.i32_type().as_basic_type_enum().into()),
         ));
         local_ctx.add_type(CodegenType::new(
             "i64".into(),
             Primitive(I64),
-            self.llvm_ctx.i64_type().as_basic_type_enum().into(),
+            Some(self.llvm_ctx.i64_type().as_basic_type_enum().into()),
         ));
         local_ctx.add_type(CodegenType::new(
             "f32".into(),
             Primitive(F32),
-            self.llvm_ctx.f32_type().as_basic_type_enum().into(),
+            Some(self.llvm_ctx.f32_type().as_basic_type_enum().into()),
         ));
         local_ctx.add_type(CodegenType::new(
             "f64".into(),
             Primitive(F64),
-            self.llvm_ctx.f64_type().as_basic_type_enum().into(),
+            Some(self.llvm_ctx.f64_type().as_basic_type_enum().into()),
         ));
         local_ctx.add_type(CodegenType::new(
             "bool".into(),
             Primitive(Bool),
-            self.llvm_ctx.bool_type().as_basic_type_enum().into(),
+            Some(self.llvm_ctx.bool_type().as_basic_type_enum().into()),
         ));
         local_ctx.add_type(CodegenType::new(
             "char".into(),
             Primitive(Char),
-            self.llvm_ctx.i8_type().as_basic_type_enum().into(),
+            Some(self.llvm_ctx.i8_type().as_basic_type_enum().into()),
         ));
         // void
         local_ctx.add_type(CodegenType::new(
             "void".into(),
             Void,
-            self.llvm_ctx.void_type().into(),
+            Some(self.llvm_ctx.void_type().into()),
         ));
     }
 
@@ -142,6 +160,7 @@ impl<'ctx> CodegenContext<'ctx> {
         &self,
         prim: &PrimitiveType,
     ) -> Result<BasicTypeEnum<'ctx>, String> {
+        println!("primitive_to_llvm_ty: {:?}", prim);
         match prim {
             PrimitiveType::I32 => Ok(self.llvm_ctx.i32_type().into()),
             PrimitiveType::I64 => Ok(self.llvm_ctx.i64_type().into()),
@@ -165,18 +184,21 @@ impl<'ctx> CodegenContext<'ctx> {
     pub fn function_to_llvm_ty(
         &self,
         f: &FunctionType<'ctx>,
+        structs: &HashMap<TypeId, StructType<'ctx>>,
     ) -> Result<CodegenLLVMType<'ctx>, String> {
+        debug!("function_to_llvm_ty");
         let mut param_types: Vec<BasicMetadataTypeEnum> = Vec::new();
         for param in f.params.values() {
             let param_type = self
-                .to_llvm_basic_ty(&param.ty.borrow_mut().sig.clone())?
+                .to_llvm_ty(&param.ty.borrow_mut().sig.clone(), structs)?
+                .basic()?
                 .into();
             param_types.push(param_type);
         }
 
         let return_type = if let Some(ret) = &f.return_type {
             let t = ret.borrow_mut().sig.clone();
-            self.to_llvm_ty(&t)?
+            self.to_llvm_ty(&t, structs)?
         } else {
             self.llvm_ctx.void_type().into()
         };
@@ -211,71 +233,134 @@ impl<'ctx> CodegenContext<'ctx> {
         }
     }
 
-    pub fn struct_to_llvm_ty(&self, s: &StructType<'ctx>) -> Result<BasicTypeEnum<'ctx>, String> {
+    pub fn struct_to_llvm_ty(
+        &self,
+        s: &StructType<'ctx>,
+        structs: &HashMap<TypeId, StructType<'ctx>>,
+    ) -> Result<BasicTypeEnum<'ctx>, String> {
+        println!("struct_to_llvm_ty: {:?}", s.id);
+
+        let opaque_struct_t = if let Some(t) = self.llvm_ctx.get_struct_type(s.name.as_str()) {
+            println!("Struct {:?}: already defined", t.get_name());
+            return Ok(t.into());
+        } else {
+            println!("Struct {:?}: not defined", s.name);
+            self.llvm_ctx.opaque_struct_type(s.name.as_str())
+        };
+
         let mut field_types: Vec<BasicTypeEnum<'ctx>> = Vec::new();
         for field in s.fields.values() {
-            let field_type = self.to_llvm_basic_ty(&field.ty.borrow_mut().sig.clone())?;
+            let field_type = match field.ty.sig() {
+                TypeSignature::Primitive(p) => match p {
+                    PrimitiveType::I8 => self.llvm_ctx.i8_type().into(),
+                    PrimitiveType::I16 => self.llvm_ctx.i16_type().into(),
+                    PrimitiveType::I32 => self.llvm_ctx.i32_type().into(),
+                    PrimitiveType::I64 => self.llvm_ctx.i64_type().into(),
+                    PrimitiveType::F32 => self.llvm_ctx.f32_type().into(),
+                    PrimitiveType::F64 => self.llvm_ctx.f64_type().into(),
+                    PrimitiveType::Bool => self.llvm_ctx.bool_type().into(),
+                    PrimitiveType::Char => self.llvm_ctx.i8_type().into(),
+                    PrimitiveType::Str => unimplemented!("str not implemented"),
+                },
+                TypeSignature::Struct(sid) => {
+                    if sid == s.id {
+                        return Err(format!(
+                            "struct_to_llvm_ty: Struct cannot contain itself: {:?}",
+                            s.id
+                        ));
+                    } else {
+                        let Some(s) = structs.get(&sid) else {
+                            return Err(format!("struct_to_llvm_ty: Struct not found: {:?}", sid))
+                        };
+                        debugln!();
+                        self.struct_to_llvm_ty(s, structs)?
+                    }
+                }
+                TypeSignature::Function(_) => todo!(),
+                TypeSignature::Pointer(ptr) => {
+                    let base = ptr.base_type();
+                    let depth = ptr.depth();
+                    println!("Pointer: {:?} {:?}", base, depth);
+                    let base_llvm;
+                    if let TypeSignature::Struct(id) = base {
+                        if id == s.id {
+                            base_llvm = opaque_struct_t;
+                        } else {
+                            let Some(s) = structs.get(&id) else {
+                                return Err(format!("struct_to_llvm_ty: Struct not found: {:?}", id))
+                            };
+
+                            if let Some(t) = self.llvm_ctx.get_struct_type(s.name.as_str()) {
+                                base_llvm = t;
+                            } else {
+                                debugln!();
+                                base_llvm = self.struct_to_llvm_ty(s, structs)?.into_struct_type();
+                            }
+                        }
+                    } else {
+                        base_llvm = self.to_llvm_ty(&base, structs)?.struct_type()?;
+                    }
+                    let mut full_type = base_llvm.as_basic_type_enum();
+                    for _ in 0..depth {
+                        full_type = full_type
+                            .ptr_type(inkwell::AddressSpace::Generic)
+                            .as_basic_type_enum();
+                    }
+                    println!("IOAWHDOIAWD");
+                    full_type.into()
+                    /* // TODO!!!
+                    self.llvm_ctx
+                        .i32_type()
+                        .ptr_type(inkwell::AddressSpace::Generic)
+                        .into() */
+                }
+                TypeSignature::Void => unreachable!("Cannot be void"),
+            };
+            // self.to_llvm_ty(&field.ty.sig(), structs)?.basic()?
             field_types.push(field_type);
         }
 
-        Ok(self
-            .llvm_ctx
-            .struct_type(field_types.as_slice(), false)
-            .into())
+        opaque_struct_t.set_body(field_types.as_slice(), false);
+
+        Ok(opaque_struct_t.into())
+        /* let Some(s) = structs.get(&s.id) else {
+            return Err(format!("struct_to_llvm_ty: Struct not found: {:?}", s.id))
+        }; */
     }
 
-    pub fn to_llvm_basic_ty(
+    pub fn to_llvm_ty(
         &self,
         ty: &TypeSignature<'ctx>,
-    ) -> Result<BasicTypeEnum<'ctx>, String> {
-        match ty {
-            TypeSignature::Primitive(prim) => self.primitive_to_llvm_ty(&prim),
-            TypeSignature::Struct(s) => {
-                let Some(s) = s else {
-                    return Err("Struct type not found".into());
-                };
-                self.struct_to_llvm_ty(s)
-            }
-            _ => Err(format!("Unsupported type: {:?}", ty)),
-        }
-    }
-
-    pub fn basic_to_any(&self, ty: BasicTypeEnum<'ctx>) -> AnyTypeEnum<'ctx> {
-        match ty {
-            BasicTypeEnum::ArrayType(array_t) => array_t.into(),
-            BasicTypeEnum::FloatType(float_t) => float_t.into(),
-            BasicTypeEnum::IntType(int_t) => int_t.into(),
-            BasicTypeEnum::PointerType(ptr_t) => ptr_t.into(),
-            BasicTypeEnum::StructType(struct_t) => struct_t.into(),
-            BasicTypeEnum::VectorType(vector_t) => vector_t.into(),
-        }
-    }
-
-    pub fn to_llvm_ty(&self, ty: &TypeSignature<'ctx>) -> Result<CodegenLLVMType<'ctx>, String> {
+        structs: &HashMap<TypeId, StructType<'ctx>>,
+    ) -> Result<CodegenLLVMType<'ctx>, String> {
+        debug!(format!("to_llvm_ty: {:?}", ty));
         use TypeSignature::*;
         match ty {
             Primitive(primitive) => {
                 let res = self.primitive_to_llvm_ty(&primitive)?;
                 Ok(res.into())
             }
-            Struct(struct_type) => {
-                let Some(struct_type) = struct_type else {
-                    return Err("Struct type not found".into());
+            Struct(id) => {
+                let Some(struct_type) = structs.get(id) else {
+                    return Err(format!("to_llvm_ty: Struct not found: {:?}", id))
                 };
-                let res = self.struct_to_llvm_ty(&struct_type)?;
+                debugln!();
+                let res = self.struct_to_llvm_ty(&struct_type, structs)?;
                 Ok(res.into())
             }
-            Function(fn_type) => Ok(self.function_to_llvm_ty(&fn_type)?.into()),
+            Function(fn_type) => Ok(self.function_to_llvm_ty(&fn_type, structs)?.into()),
             Void => Ok(self.llvm_ctx.void_type().into()),
-            Pointer(ptr_type) => Ok(self.ptr_to_llvm_ty(&ptr_type)?.into()),
+            Pointer(ptr_type) => Ok(self.ptr_to_llvm_ty(&ptr_type, structs)?.into()),
         }
     }
 
     pub fn ptr_to_llvm_ty(
         &self,
         ptr_type: &type_sig::PointerType<'ctx>,
+        structs: &HashMap<TypeId, StructType<'ctx>>,
     ) -> Result<CodegenLLVMType<'ctx>, String> {
-        match &*ptr_type.target {
+        debug!(format!("ptr_to_llvm_ty: {:?}", ptr_type));
+        match ptr_type.target.as_ref() {
             TypeSignature::Primitive(prim) => match prim {
                 PrimitiveType::I8 => Ok(self
                     .llvm_ctx
@@ -315,20 +400,26 @@ impl<'ctx> CodegenContext<'ctx> {
                 PrimitiveType::Char => todo!(),
                 _ => Err("Unsupported primitive type".into()),
             },
-            TypeSignature::Struct(Some(struct_ptr)) => {
-                let struct_type = self.struct_to_llvm_ty(&struct_ptr)?;
+            TypeSignature::Struct(id) => {
+                //println!("structs: {:?}", structs);
+                let Some(struct_ptr) = structs.get(id) else {
+                    panic!();
+                    return Err(format!("ptr_to_llvm_ty: Struct not found: {:?}", id))
+                };
+                debugln!();
+                let struct_type = self.struct_to_llvm_ty(&struct_ptr, structs)?;
                 Ok(struct_type.ptr_type(AddressSpace::Generic).into())
             }
             TypeSignature::Function(fn_type) => {
                 todo!()
             }
             TypeSignature::Pointer(ptr) => {
-                let target_type = self.ptr_to_llvm_ty(&ptr)?;
+                let target_type = self.ptr_to_llvm_ty(&ptr, structs)?;
 
                 Ok(target_type.basic()?.ptr_type(AddressSpace::Generic).into())
             }
             TypeSignature::Void => unreachable!(),
-            _ => Err("Unsupported codegen type".into()),
+            t => Err(format!("Unsupported type: {:?}", t)),
         }
     }
 }
@@ -368,20 +459,16 @@ impl<'ctx> CodegenName<'ctx> {
 pub struct CodegenType<'ctx> {
     pub name: String,
     pub ty: TypeSignature<'ctx>,
-    pub llvm_ty: CodegenLLVMType<'ctx>,
+    pub llvm_ty: Option<CodegenLLVMType<'ctx>>,
 }
 
 impl<'ctx> CodegenType<'ctx> {
-    pub fn new(name: String, ty: TypeSignature<'ctx>, llvm_ty: CodegenLLVMType<'ctx>) -> Self {
+    pub fn new(
+        name: String,
+        ty: TypeSignature<'ctx>,
+        llvm_ty: Option<CodegenLLVMType<'ctx>>,
+    ) -> Self {
         Self { name, ty, llvm_ty }
-    }
-
-    pub fn to_struct_type(&self) -> Result<type_sig::StructType<'ctx>, String> {
-        if let TypeSignature::Struct(Some(s)) = &self.ty {
-            Ok(s.clone())
-        } else {
-            Err("Type is not a struct".into())
-        }
     }
 }
 
@@ -468,7 +555,7 @@ impl<'ctx> CodegenLLVMType<'ctx> {
         match self {
             CodegenLLVMType::Basic(basic) => match basic {
                 BasicTypeEnum::StructType(struct_t) => Ok(*struct_t),
-                _ => Err("Not a struct type".into()),
+                other => Err(format!("Not a struct type: {:?}", other)),
             },
             _ => Err(format!(
                 "Type is not basic: {:?} {}:{}",
@@ -549,13 +636,21 @@ impl<'ctx> From<VoidType<'ctx>> for CodegenLLVMType<'ctx> {
     }
 }
 
-pub trait GetLLVMType {
-    fn llvm_type(&self) -> CodegenLLVMType;
+pub trait GetLLVMType<'ctx> {
+    fn llvm_type(&self) -> Result<CodegenLLVMType<'ctx>, String>;
 }
 
-impl<'ctx> GetLLVMType for Rc<CodegenType<'ctx>> {
-    fn llvm_type(&self) -> CodegenLLVMType<'ctx> {
-        self.llvm_ty.clone()
+impl<'ctx> GetLLVMType<'ctx> for Rc<CodegenType<'ctx>> {
+    fn llvm_type(&self) -> Result<CodegenLLVMType<'ctx>, String> {
+        match &self.llvm_ty {
+            Some(ty) => Ok(ty.clone()),
+            None => Err(format!(
+                "Type has no LLVM type: {:?} {}:{}",
+                self,
+                file!(),
+                line!()
+            )),
+        }
     }
 }
 

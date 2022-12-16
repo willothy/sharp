@@ -2,9 +2,10 @@ use crate::{
     ast::{
         Block, Declaration, Expression, FunctionCall, FunctionDeclaration, FunctionDefinition,
         FunctionParameter, IfExpression, LoopStatement, MemberAccess, Module, NodeSpan,
-        ReturnStatement, Statement, StructDeclaration, StructField, StructInitializer,
-        StructInitializerField, VarAssignment, VarDeclaration, YieldStatement,
+        ResultStatement, ReturnStatement, Statement, StructDeclaration, StructField,
+        StructInitializer, StructInitializerField, VarAssignment, VarDeclaration,
     },
+    debug,
     tokenizer::{
         AssignmentOperator, Keyword, Operator, OperatorType, Span, Symbol, Token, TokenKind,
         TokenPosition,
@@ -162,6 +163,7 @@ impl<'parser> Parser<'parser> {
     }
 
     pub fn module(&mut self, mod_name: String) -> Result<Module, String> {
+        debug!("parser::Parser::module");
         let mut body = Vec::new();
         let mut submodules = Vec::new();
 
@@ -208,6 +210,7 @@ impl<'parser> Parser<'parser> {
     }
 
     pub fn module_decl(&mut self) -> Result<Module, String> {
+        debug!("parser::Parser::module_decl");
         self.eat(TokenKind::Keyword(Keyword::Module))?;
         let name = if let Some(TokenKind::Identifier(name)) = self.advance() {
             name.clone()
@@ -226,6 +229,7 @@ impl<'parser> Parser<'parser> {
     }
 
     pub fn type_name(&mut self) -> Result<String, String> {
+        debug!("parser::Parser::type_name");
         let mut type_name = if let Some(TokenKind::Identifier(type_name)) = self.current() {
             type_name
         } else {
@@ -245,6 +249,7 @@ impl<'parser> Parser<'parser> {
     }
 
     pub fn fn_params(&mut self) -> Result<(Vec<FunctionParameter>, bool), String> {
+        debug!("parser::Parser::fn_params");
         let mut params = Vec::new();
         let mut param_idx: u32 = 0;
         let mut variadic = false;
@@ -310,6 +315,7 @@ impl<'parser> Parser<'parser> {
         ),
         String,
     > {
+        debug!("parser::Parser::function_sig");
         let span = self.span_start()?;
         self.advance(); // Skip function keyword
         let name = if let Some(TokenKind::Identifier(name)) = self.current() {
@@ -328,7 +334,7 @@ impl<'parser> Parser<'parser> {
 
         let (params, variadic): (Vec<FunctionParameter>, bool) = self.fn_params()?;
 
-        let return_type = if let Some(TokenKind::Symbol(Symbol::Arrow)) = self.current() {
+        let return_type = if let Some(TokenKind::Symbol(Symbol::RightArrow)) = self.current() {
             self.advance();
             Some(self.type_name()?)
         } else {
@@ -348,6 +354,7 @@ impl<'parser> Parser<'parser> {
             NodeSpan,
         ),
     ) -> Result<crate::ast::FunctionDefinition, String> {
+        debug!("parser::Parser::function_def");
         let (name, params, return_type, variadic, span) = fn_sig;
         let span = self.span_start()?;
         let body = self.block()?;
@@ -363,6 +370,7 @@ impl<'parser> Parser<'parser> {
     }
 
     pub fn struct_decl(&mut self) -> Result<StructDeclaration, String> {
+        debug!("parser::Parser::struct_decl");
         let outer_span = self.span_start()?;
         self.eat(TokenKind::Keyword(Keyword::Struct))?;
         let name = if let Some(TokenKind::Identifier(name)) = self.advance() {
@@ -427,6 +435,7 @@ impl<'parser> Parser<'parser> {
     }
 
     pub fn block(&mut self) -> Result<crate::ast::Block, String> {
+        debug!("parser::Parser::block");
         let span = self.span_start()?;
         self.expect(&TokenKind::Symbol(Symbol::OpenBrace), file!(), line!())?;
         self.advance();
@@ -449,6 +458,7 @@ impl<'parser> Parser<'parser> {
     }
 
     pub fn assignment(&mut self) -> Result<Expression, String> {
+        debug!("parser::Parser::assignment");
         let expr = self.logical_or()?;
         if let Expression::BinaryOp {
             left,
@@ -480,6 +490,7 @@ impl<'parser> Parser<'parser> {
     }
 
     fn validate_assign_target(&self, target: Expression) -> Result<Expression, String> {
+        debug!("parser::Parser::validate_assign_target");
         match &target {
             Expression::Identifier { name, span } => Ok(target),
             Expression::MemberAccess { member_access } => Ok(target),
@@ -504,6 +515,7 @@ impl<'parser> Parser<'parser> {
     }
 
     pub fn if_expr(&mut self) -> Result<Expression, String> {
+        debug!("parser::Parser::if_expr");
         let span = self.span_start()?;
         self.eat(TokenKind::Keyword(Keyword::If))?;
         let condition = self.expression()?;
@@ -524,6 +536,7 @@ impl<'parser> Parser<'parser> {
     }
 
     pub fn struct_init(&mut self) -> Result<Expression, String> {
+        debug!("parser::Parser::struct_init");
         let outer_span = self.span_start()?;
         let name = if let Some(TokenKind::Identifier(name)) = self.advance() {
             name
@@ -615,31 +628,35 @@ impl<'parser> Parser<'parser> {
     }
 
     pub fn expression(&mut self) -> Result<Expression, String> {
+        debug!("parser::Parser::expression");
         let curr = self.current();
         //println!("expression: {:?}", curr);
         // Check for If, Block, and Fn Calls
+        debug!(format!("{:?}", curr));
         if let Some(TokenKind::Keyword(Keyword::If)) = curr {
             return self.if_expr();
+        } else if let Some(TokenKind::Keyword(Keyword::SizeOf)) = curr {
+            return self.sizeof_expr();
         } else if let Some(TokenKind::Symbol(Symbol::OpenBrace)) = curr {
             return Ok(Expression::Block {
                 block: self.block()?,
             });
-        } else if let Some(TokenKind::Identifier(_)) = curr {
-            //println!("lookahead: {:?}", self.lookahead());
+        }
+        /* else if let Some(TokenKind::Identifier(_)) = curr {
             if let Some(TokenKind::Symbol(Symbol::OpenBrace)) = self.lookahead() {
                 return Ok(self.struct_init()?);
             }
-        }
-
-        /* else if let Some(Token::Identifier(_)) = curr {
-            if let Some(Token::Symbol(Symbol::OpenParen)) = self.lookahead() {
-                return self.fn_call();
+        } */
+        /* else if let Some(TokenKind::Identifier(_)) = curr {
+            if let Some(TokenKind::Symbol(Symbol::OpenParen)) = self.lookahead() {
+                return self.call_expr();
             }
         } */
         self.assignment()
     }
 
     pub fn var_declaration(&mut self) -> Result<Statement, String> {
+        debug!("parser::Parser::var_declaration");
         let span = self.span_start()?;
         self.advance();
         let type_name = self.type_name()?;
@@ -673,6 +690,7 @@ impl<'parser> Parser<'parser> {
     }
 
     pub fn statement(&mut self) -> Result<crate::ast::Statement, String> {
+        debug!("parser::Parser::statement");
         let span = self.span_start()?;
         let statement = match self.current() {
             Some(TokenKind::Keyword(Keyword::Return)) => {
@@ -685,10 +703,10 @@ impl<'parser> Parser<'parser> {
                 };
                 Ok(Statement::Return(ReturnStatement { value, span }))
             }
-            Some(TokenKind::Keyword(Keyword::Yield)) => {
+            Some(TokenKind::Symbol(Symbol::LeftArrow)) => {
                 self.advance();
                 let expression = self.expression()?;
-                Ok(Statement::Yield(YieldStatement {
+                Ok(Statement::Result(ResultStatement {
                     value: expression,
                     span: self.span_end(span)?,
                 }))
@@ -728,6 +746,7 @@ impl<'parser> Parser<'parser> {
         builder: fn(&mut Parser<'parser>) -> Result<Expression, String>,
         _op_type: OperatorType,
     ) -> Result<Expression, String> {
+        debug!("parser::Parser::logical_expr_helper");
         let mut left = builder(self)?;
 
         while let Some(TokenKind::Operator(op)) = self.current() {
@@ -750,6 +769,7 @@ impl<'parser> Parser<'parser> {
         builder: fn(&mut Parser<'parser>) -> Result<Expression, String>,
         _op_type: OperatorType,
     ) -> Result<Expression, String> {
+        debug!("parser::Parser::binary_expr_helper");
         let mut left = builder(self)?;
 
         while let Some(TokenKind::Operator(op)) = self.current() {
@@ -768,30 +788,37 @@ impl<'parser> Parser<'parser> {
     }
 
     pub fn logical_or(&mut self) -> Result<Expression, String> {
+        debug!("parser::Parser::logical_or");
         self.logical_expr_helper(Self::logical_and, OperatorType::LogicalOr)
     }
 
     pub fn logical_and(&mut self) -> Result<Expression, String> {
+        debug!("parser::Parser::logical_and");
         self.logical_expr_helper(Self::equality, OperatorType::LogicalAnd)
     }
 
     pub fn additive(&mut self) -> Result<Expression, String> {
+        debug!("parser::Parser::additive");
         self.binary_expr_helper(Self::multiplicative, OperatorType::Additive)
     }
 
     pub fn multiplicative(&mut self) -> Result<Expression, String> {
+        debug!("parser::Parser::multiplicative");
         self.binary_expr_helper(Self::unary, OperatorType::Multiplicative)
     }
 
     pub fn equality(&mut self) -> Result<Expression, String> {
+        debug!("parser::Parser::equality");
         self.binary_expr_helper(Self::relational, OperatorType::Equality)
     }
 
     pub fn relational(&mut self) -> Result<Expression, String> {
+        debug!("parser::Parser::relational");
         self.binary_expr_helper(Self::additive, OperatorType::Relational)
     }
 
     pub fn unary(&mut self) -> Result<Expression, String> {
+        debug!("parser::Parser::unary");
         let span = self.span_start()?;
         let curr = self.current();
         match curr {
@@ -811,6 +838,11 @@ impl<'parser> Parser<'parser> {
                     ))
                 }
             }
+            /* Some(_s) => {
+                debug!(format!("{:?}", _s));
+                //panic!();
+                self.left_hand_side_expr()
+            } */
             Some(_) => self.left_hand_side_expr(),
             None => Err(format!(
                 "Expected unary operator, got {:?} at {}",
@@ -821,12 +853,14 @@ impl<'parser> Parser<'parser> {
     }
 
     pub fn left_hand_side_expr(&mut self) -> Result<Expression, String> {
+        debug!("parser::Parser::left_hand_side_expr");
         self.call_member_expr()
     }
 
     pub fn call_member_expr(&mut self) -> Result<Expression, String> {
+        debug!("parser::Parser::call_member_expr");
         let member = self.member_expr()?;
-
+        debug!(format!("{:?}", self.current()));
         if let Some(TokenKind::Symbol(Symbol::OpenParen)) = self.current() {
             self.call_expr(member)
         } else {
@@ -835,6 +869,7 @@ impl<'parser> Parser<'parser> {
     }
 
     fn call_expr(&mut self, callee: Expression) -> Result<Expression, String> {
+        debug!("parser::Parser::call_expr");
         let span = self.span_start()?;
         Ok(Expression::FnCall {
             fn_call: FunctionCall {
@@ -846,6 +881,7 @@ impl<'parser> Parser<'parser> {
     }
 
     pub fn arguments(&mut self) -> Result<Vec<Expression>, String> {
+        debug!("parser::Parser::arguments");
         let mut args = Vec::new();
         self.expect(&TokenKind::Symbol(Symbol::OpenParen), file!(), line!())?;
         self.advance();
@@ -878,6 +914,7 @@ impl<'parser> Parser<'parser> {
     }
 
     pub fn member_expr(&mut self) -> Result<Expression, String> {
+        debug!("parser::Parser::member_expr");
         let mut object: Expression = self.primary_expr()?;
 
         while let Some(TokenKind::Symbol(Symbol::Dot))
@@ -915,6 +952,7 @@ impl<'parser> Parser<'parser> {
     }
 
     pub fn identifier(&mut self) -> Result<Expression, String> {
+        debug!("parser::Parser::identifier");
         let span = self.span_start()?;
         match self.current() {
             Some(TokenKind::Identifier(id)) => {
@@ -934,17 +972,18 @@ impl<'parser> Parser<'parser> {
     }
 
     pub fn primary_expr(&mut self) -> Result<Expression, String> {
+        debug!("parser::Parser::primary_expr");
         match self.current() {
             Some(TokenKind::Literal(_)) => Ok(self.literal()?),
             Some(TokenKind::Symbol(Symbol::OpenParen)) => Ok(self.paren_expr()?),
-            Some(TokenKind::Identifier(_)) => {
-                /* if let Some(TokenKind::Symbol(Symbol::OpenBrace)) = self.lookahead() {
+            Some(TokenKind::Identifier(i)) => {
+                if let Some(TokenKind::Symbol(Symbol::OpenBrace)) = self.lookahead() {
                     println!("struct init 1");
                     Ok(self.struct_init()?)
                 } else {
                     Ok(self.identifier()?)
-                } */
-                Ok(self.identifier()?)
+                }
+                //Ok(self.identifier()?)
             }
             Some(_) => Ok(self.left_hand_side_expr()?),
             None => Err(format!(
@@ -956,6 +995,7 @@ impl<'parser> Parser<'parser> {
     }
 
     pub fn literal(&mut self) -> Result<Expression, String> {
+        debug!("parser::Parser::literal");
         let Some(TokenKind::Literal(literal)) = self.current() else {
             return Err("Expected literal".to_string());
         };
@@ -968,6 +1008,7 @@ impl<'parser> Parser<'parser> {
     }
 
     fn paren_expr(&mut self) -> Result<Expression, String> {
+        debug!("parser::Parser::paren_expr");
         self.expect(&TokenKind::Symbol(Symbol::OpenParen), file!(), line!())?;
         self.advance();
         let expr = self.expression()?;
@@ -986,12 +1027,26 @@ impl<'parser> Parser<'parser> {
             NodeSpan,
         ),
     ) -> Result<FunctionDeclaration, String> {
+        debug!("parser::Parser::function_decl");
         self.eat(TokenKind::Symbol(Symbol::Semicolon))?;
         Ok(FunctionDeclaration {
             name: fn_sig.0,
             params: fn_sig.1,
             return_type: fn_sig.2,
             variadic: fn_sig.3,
+        })
+    }
+
+    fn sizeof_expr(&mut self) -> Result<Expression, String> {
+        debug!("parser::Parser::sizeof_expr");
+        let span = self.span_start()?;
+        self.eat(TokenKind::Keyword(Keyword::SizeOf))?;
+        self.eat(TokenKind::Symbol(Symbol::OpenParen))?;
+        let expr = self.identifier()?;
+        self.eat(TokenKind::Symbol(Symbol::CloseParen))?;
+        Ok(Expression::SizeOfExpr {
+            expr: Box::from(expr),
+            span: self.span_end(span)?,
         })
     }
 }

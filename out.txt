@@ -1,0 +1,1223 @@
+Module {
+    body: [
+        FunctionDecl(
+            FunctionDeclaration {
+                name: "printf",
+                return_type: Some(
+                    "i32",
+                ),
+                params: [
+                    FunctionParameter {
+                        name: "format",
+                        type_name: "str",
+                        idx: 0,
+                        span: NodeSpan {
+                            start: TokenPosition {
+                                line: 3,
+                                column: 15,
+                                offset: 16,
+                            },
+                            end: TokenPosition {
+                                line: 3,
+                                column: 23,
+                                offset: 24,
+                            },
+                        },
+                    },
+                ],
+                variadic: true,
+            },
+        ),
+        FunctionDecl(
+            FunctionDeclaration {
+                name: "malloc",
+                return_type: Some(
+                    "*test",
+                ),
+                params: [
+                    FunctionParameter {
+                        name: "size",
+                        type_name: "i64",
+                        idx: 0,
+                        span: NodeSpan {
+                            start: TokenPosition {
+                                line: 4,
+                                column: 15,
+                                offset: 51,
+                            },
+                            end: TokenPosition {
+                                line: 4,
+                                column: 19,
+                                offset: 55,
+                            },
+                        },
+                    },
+                ],
+                variadic: false,
+            },
+        ),
+        Struct(
+            StructDeclaration {
+                name: "test",
+                fields: [
+                    StructField {
+                        name: "a",
+                        type_name: "i32",
+                        idx: 0,
+                        span: NodeSpan {
+                            start: TokenPosition {
+                                line: 7,
+                                column: 9,
+                                offset: 90,
+                            },
+                            end: TokenPosition {
+                                line: 7,
+                                column: 10,
+                                offset: 91,
+                            },
+                        },
+                    },
+                    StructField {
+                        name: "b",
+                        type_name: "i32",
+                        idx: 1,
+                        span: NodeSpan {
+                            start: TokenPosition {
+                                line: 8,
+                                column: 9,
+                                offset: 101,
+                            },
+                            end: TokenPosition {
+                                line: 8,
+                                column: 10,
+                                offset: 102,
+                            },
+                        },
+                    },
+                    StructField {
+                        name: "c",
+                        type_name: "i32",
+                        idx: 2,
+                        span: NodeSpan {
+                            start: TokenPosition {
+                                line: 9,
+                                column: 9,
+                                offset: 112,
+                            },
+                            end: TokenPosition {
+                                line: 10,
+                                column: 1,
+                                offset: 114,
+                            },
+                        },
+                    },
+                ],
+                methods: [],
+                span: NodeSpan {
+                    start: TokenPosition {
+                        line: 6,
+                        column: 8,
+                        offset: 75,
+                    },
+                    end: TokenPosition {
+                        line: 12,
+                        column: 1,
+                        offset: 117,
+                    },
+                },
+            },
+        ),
+        FunctionDef(
+            FunctionDefinition {
+                name: "build_test_ptr",
+                return_type: Some(
+                    "*test",
+                ),
+                params: [],
+                body: Block {
+                    statements: [
+                        Variable(
+                            VarDeclaration {
+                                name: "t",
+                                type_name: "*test",
+                                initializer: Some(
+                                    FnCall {
+                                        fn_call: FunctionCall {
+                                            callee: Identifier {
+                                                name: "malloc",
+                                                span: NodeSpan {
+                                                    start: TokenPosition {
+                                                        line: 13,
+                                                        column: 25,
+                                                        offset: 172,
+                                                    },
+                                                    end: TokenPosition {
+                                                        line: 13,
+                                                        column: 25,
+                                                        offset: 172,
+                                                    },
+                                                },
+                                            },
+                                            args: [
+                                                Literal {
+                                                    literal: Int(
+                                                        128,
+                                                        TokenPosition {
+                                                            line: 13,
+                                                            column: 29,
+                                                            offset: 176,
+                                                        },
+                                                    ),
+                                                },
+                                            ],
+                                            span: NodeSpan {
+                                                start: TokenPosition {
+                                                    line: 13,
+                                                    column: 26,
+                                                    offset: 173,
+                                                },
+                                                end: TokenPosition {
+                                                    line: 13,
+                                                    column: 30,
+                                                    offset: 177,
+                                                },
+                                            },
+                                        },
+                                    },
+                                ),
+                                span: NodeSpan {
+                                    start: TokenPosition {
+                                        line: 13,
+                                        column: 9,
+                                        offset: 156,
+                                    },
+                                    end: TokenPosition {
+                                        line: 13,
+                                        column: 30,
+                                        offset: 177,
+                                    },
+                                },
+                            },
+                        ),
+                        Expression(
+                            VarAssignment {
+                                var_assign: VarAssignment {
+                                    operator: Assign,
+                                    left: MemberAccess {
+                                        member_access: MemberAccess {
+                                            object: UnaryOp {
+                                                expr: Identifier {
+                                                    name: "t",
+                                                    span: NodeSpan {
+                                                        start: TokenPosition {
+                                                            line: 14,
+                                                            column: 8,
+                                                            offset: 186,
+                                                        },
+                                                        end: TokenPosition {
+                                                            line: 14,
+                                                            column: 8,
+                                                            offset: 186,
+                                                        },
+                                                    },
+                                                },
+                                                op: Times,
+                                                span: NodeSpan {
+                                                    start: TokenPosition {
+                                                        line: 14,
+                                                        column: 7,
+                                                        offset: 185,
+                                                    },
+                                                    end: TokenPosition {
+                                                        line: 14,
+                                                        column: 8,
+                                                        offset: 186,
+                                                    },
+                                                },
+                                            },
+                                            member: Identifier {
+                                                name: "a",
+                                                span: NodeSpan {
+                                                    start: TokenPosition {
+                                                        line: 14,
+                                                        column: 12,
+                                                        offset: 190,
+                                                    },
+                                                    end: TokenPosition {
+                                                        line: 14,
+                                                        column: 12,
+                                                        offset: 190,
+                                                    },
+                                                },
+                                            },
+                                            computed: false,
+                                            span: NodeSpan {
+                                                start: TokenPosition {
+                                                    line: 14,
+                                                    column: 10,
+                                                    offset: 188,
+                                                },
+                                                end: TokenPosition {
+                                                    line: 14,
+                                                    column: 12,
+                                                    offset: 190,
+                                                },
+                                            },
+                                        },
+                                    },
+                                    right: Literal {
+                                        literal: Int(
+                                            1,
+                                            TokenPosition {
+                                                line: 14,
+                                                column: 15,
+                                                offset: 193,
+                                            },
+                                        ),
+                                    },
+                                    span: NodeSpan {
+                                        start: TokenPosition {
+                                            line: 14,
+                                            column: 14,
+                                            offset: 192,
+                                        },
+                                        end: TokenPosition {
+                                            line: 14,
+                                            column: 15,
+                                            offset: 193,
+                                        },
+                                    },
+                                },
+                            },
+                        ),
+                        Expression(
+                            VarAssignment {
+                                var_assign: VarAssignment {
+                                    operator: Assign,
+                                    left: MemberAccess {
+                                        member_access: MemberAccess {
+                                            object: UnaryOp {
+                                                expr: Identifier {
+                                                    name: "t",
+                                                    span: NodeSpan {
+                                                        start: TokenPosition {
+                                                            line: 15,
+                                                            column: 8,
+                                                            offset: 202,
+                                                        },
+                                                        end: TokenPosition {
+                                                            line: 15,
+                                                            column: 8,
+                                                            offset: 202,
+                                                        },
+                                                    },
+                                                },
+                                                op: Times,
+                                                span: NodeSpan {
+                                                    start: TokenPosition {
+                                                        line: 15,
+                                                        column: 7,
+                                                        offset: 201,
+                                                    },
+                                                    end: TokenPosition {
+                                                        line: 15,
+                                                        column: 8,
+                                                        offset: 202,
+                                                    },
+                                                },
+                                            },
+                                            member: Identifier {
+                                                name: "b",
+                                                span: NodeSpan {
+                                                    start: TokenPosition {
+                                                        line: 15,
+                                                        column: 12,
+                                                        offset: 206,
+                                                    },
+                                                    end: TokenPosition {
+                                                        line: 15,
+                                                        column: 12,
+                                                        offset: 206,
+                                                    },
+                                                },
+                                            },
+                                            computed: false,
+                                            span: NodeSpan {
+                                                start: TokenPosition {
+                                                    line: 15,
+                                                    column: 10,
+                                                    offset: 204,
+                                                },
+                                                end: TokenPosition {
+                                                    line: 15,
+                                                    column: 12,
+                                                    offset: 206,
+                                                },
+                                            },
+                                        },
+                                    },
+                                    right: Literal {
+                                        literal: Int(
+                                            2,
+                                            TokenPosition {
+                                                line: 15,
+                                                column: 15,
+                                                offset: 209,
+                                            },
+                                        ),
+                                    },
+                                    span: NodeSpan {
+                                        start: TokenPosition {
+                                            line: 15,
+                                            column: 14,
+                                            offset: 208,
+                                        },
+                                        end: TokenPosition {
+                                            line: 15,
+                                            column: 15,
+                                            offset: 209,
+                                        },
+                                    },
+                                },
+                            },
+                        ),
+                        Expression(
+                            VarAssignment {
+                                var_assign: VarAssignment {
+                                    operator: Assign,
+                                    left: MemberAccess {
+                                        member_access: MemberAccess {
+                                            object: UnaryOp {
+                                                expr: Identifier {
+                                                    name: "t",
+                                                    span: NodeSpan {
+                                                        start: TokenPosition {
+                                                            line: 16,
+                                                            column: 8,
+                                                            offset: 218,
+                                                        },
+                                                        end: TokenPosition {
+                                                            line: 16,
+                                                            column: 8,
+                                                            offset: 218,
+                                                        },
+                                                    },
+                                                },
+                                                op: Times,
+                                                span: NodeSpan {
+                                                    start: TokenPosition {
+                                                        line: 16,
+                                                        column: 7,
+                                                        offset: 217,
+                                                    },
+                                                    end: TokenPosition {
+                                                        line: 16,
+                                                        column: 8,
+                                                        offset: 218,
+                                                    },
+                                                },
+                                            },
+                                            member: Identifier {
+                                                name: "c",
+                                                span: NodeSpan {
+                                                    start: TokenPosition {
+                                                        line: 16,
+                                                        column: 12,
+                                                        offset: 222,
+                                                    },
+                                                    end: TokenPosition {
+                                                        line: 16,
+                                                        column: 12,
+                                                        offset: 222,
+                                                    },
+                                                },
+                                            },
+                                            computed: false,
+                                            span: NodeSpan {
+                                                start: TokenPosition {
+                                                    line: 16,
+                                                    column: 10,
+                                                    offset: 220,
+                                                },
+                                                end: TokenPosition {
+                                                    line: 16,
+                                                    column: 12,
+                                                    offset: 222,
+                                                },
+                                            },
+                                        },
+                                    },
+                                    right: Literal {
+                                        literal: Int(
+                                            3,
+                                            TokenPosition {
+                                                line: 16,
+                                                column: 15,
+                                                offset: 225,
+                                            },
+                                        ),
+                                    },
+                                    span: NodeSpan {
+                                        start: TokenPosition {
+                                            line: 16,
+                                            column: 14,
+                                            offset: 224,
+                                        },
+                                        end: TokenPosition {
+                                            line: 16,
+                                            column: 15,
+                                            offset: 225,
+                                        },
+                                    },
+                                },
+                            },
+                        ),
+                        Return(
+                            ReturnStatement {
+                                value: Some(
+                                    Identifier {
+                                        name: "t",
+                                        span: NodeSpan {
+                                            start: TokenPosition {
+                                                line: 17,
+                                                column: 13,
+                                                offset: 239,
+                                            },
+                                            end: TokenPosition {
+                                                line: 17,
+                                                column: 13,
+                                                offset: 239,
+                                            },
+                                        },
+                                    },
+                                ),
+                                span: NodeSpan {
+                                    start: TokenPosition {
+                                        line: 17,
+                                        column: 12,
+                                        offset: 238,
+                                    },
+                                    end: TokenPosition {
+                                        line: 0,
+                                        column: 0,
+                                        offset: 0,
+                                    },
+                                },
+                            },
+                        ),
+                    ],
+                    span: NodeSpan {
+                        start: TokenPosition {
+                            line: 13,
+                            column: 5,
+                            offset: 152,
+                        },
+                        end: TokenPosition {
+                            line: 20,
+                            column: 1,
+                            offset: 244,
+                        },
+                    },
+                },
+                variadic: false,
+                span: NodeSpan {
+                    start: TokenPosition {
+                        line: 13,
+                        column: 5,
+                        offset: 152,
+                    },
+                    end: TokenPosition {
+                        line: 20,
+                        column: 1,
+                        offset: 244,
+                    },
+                },
+            },
+        ),
+        FunctionDef(
+            FunctionDefinition {
+                name: "main",
+                return_type: Some(
+                    "i32",
+                ),
+                params: [],
+                body: Block {
+                    statements: [
+                        Variable(
+                            VarDeclaration {
+                                name: "t_ptr",
+                                type_name: "*test",
+                                initializer: Some(
+                                    FnCall {
+                                        fn_call: FunctionCall {
+                                            callee: Identifier {
+                                                name: "build_test_ptr",
+                                                span: NodeSpan {
+                                                    start: TokenPosition {
+                                                        line: 21,
+                                                        column: 37,
+                                                        offset: 299,
+                                                    },
+                                                    end: TokenPosition {
+                                                        line: 21,
+                                                        column: 37,
+                                                        offset: 299,
+                                                    },
+                                                },
+                                            },
+                                            args: [],
+                                            span: NodeSpan {
+                                                start: TokenPosition {
+                                                    line: 21,
+                                                    column: 38,
+                                                    offset: 300,
+                                                },
+                                                end: TokenPosition {
+                                                    line: 21,
+                                                    column: 39,
+                                                    offset: 301,
+                                                },
+                                            },
+                                        },
+                                    },
+                                ),
+                                span: NodeSpan {
+                                    start: TokenPosition {
+                                        line: 21,
+                                        column: 9,
+                                        offset: 271,
+                                    },
+                                    end: TokenPosition {
+                                        line: 21,
+                                        column: 39,
+                                        offset: 301,
+                                    },
+                                },
+                            },
+                        ),
+                        Variable(
+                            VarDeclaration {
+                                name: "t",
+                                type_name: "test",
+                                initializer: Some(
+                                    UnaryOp {
+                                        expr: Identifier {
+                                            name: "t_ptr",
+                                            span: NodeSpan {
+                                                start: TokenPosition {
+                                                    line: 22,
+                                                    column: 24,
+                                                    offset: 326,
+                                                },
+                                                end: TokenPosition {
+                                                    line: 22,
+                                                    column: 24,
+                                                    offset: 326,
+                                                },
+                                            },
+                                        },
+                                        op: Times,
+                                        span: NodeSpan {
+                                            start: TokenPosition {
+                                                line: 22,
+                                                column: 19,
+                                                offset: 321,
+                                            },
+                                            end: TokenPosition {
+                                                line: 22,
+                                                column: 24,
+                                                offset: 326,
+                                            },
+                                        },
+                                    },
+                                ),
+                                span: NodeSpan {
+                                    start: TokenPosition {
+                                        line: 22,
+                                        column: 9,
+                                        offset: 311,
+                                    },
+                                    end: TokenPosition {
+                                        line: 22,
+                                        column: 24,
+                                        offset: 326,
+                                    },
+                                },
+                            },
+                        ),
+                        Variable(
+                            VarDeclaration {
+                                name: "x",
+                                type_name: "i32",
+                                initializer: Some(
+                                    If {
+                                        expr: IfExpression {
+                                            condition: BinaryOp {
+                                                left: UnaryOp {
+                                                    expr: MemberAccess {
+                                                        member_access: MemberAccess {
+                                                            object: Identifier {
+                                                                name: "t",
+                                                                span: NodeSpan {
+                                                                    start: TokenPosition {
+                                                                        line: 24,
+                                                                        column: 22,
+                                                                        offset: 350,
+                                                                    },
+                                                                    end: TokenPosition {
+                                                                        line: 24,
+                                                                        column: 22,
+                                                                        offset: 350,
+                                                                    },
+                                                                },
+                                                            },
+                                                            member: Identifier {
+                                                                name: "a",
+                                                                span: NodeSpan {
+                                                                    start: TokenPosition {
+                                                                        line: 24,
+                                                                        column: 25,
+                                                                        offset: 353,
+                                                                    },
+                                                                    end: TokenPosition {
+                                                                        line: 24,
+                                                                        column: 25,
+                                                                        offset: 353,
+                                                                    },
+                                                                },
+                                                            },
+                                                            computed: false,
+                                                            span: NodeSpan {
+                                                                start: TokenPosition {
+                                                                    line: 24,
+                                                                    column: 23,
+                                                                    offset: 351,
+                                                                },
+                                                                end: TokenPosition {
+                                                                    line: 24,
+                                                                    column: 25,
+                                                                    offset: 353,
+                                                                },
+                                                            },
+                                                        },
+                                                    },
+                                                    op: Times,
+                                                    span: NodeSpan {
+                                                        start: TokenPosition {
+                                                            line: 24,
+                                                            column: 21,
+                                                            offset: 349,
+                                                        },
+                                                        end: TokenPosition {
+                                                            line: 24,
+                                                            column: 25,
+                                                            offset: 353,
+                                                        },
+                                                    },
+                                                },
+                                                right: Literal {
+                                                    literal: Int(
+                                                        1,
+                                                        TokenPosition {
+                                                            line: 24,
+                                                            column: 29,
+                                                            offset: 357,
+                                                        },
+                                                    ),
+                                                },
+                                                op: Equals,
+                                                span: NodeSpan {
+                                                    start: TokenPosition {
+                                                        line: 24,
+                                                        column: 28,
+                                                        offset: 356,
+                                                    },
+                                                    end: TokenPosition {
+                                                        line: 24,
+                                                        column: 30,
+                                                        offset: 358,
+                                                    },
+                                                },
+                                            },
+                                            body: Block {
+                                                block: Block {
+                                                    statements: [
+                                                        Result(
+                                                            ResultStatement {
+                                                                value: If {
+                                                                    expr: IfExpression {
+                                                                        condition: BinaryOp {
+                                                                            left: UnaryOp {
+                                                                                expr: MemberAccess {
+                                                                                    member_access: MemberAccess {
+                                                                                        object: Identifier {
+                                                                                            name: "t",
+                                                                                            span: NodeSpan {
+                                                                                                start: TokenPosition {
+                                                                                                    line: 25,
+                                                                                                    column: 17,
+                                                                                                    offset: 376,
+                                                                                                },
+                                                                                                end: TokenPosition {
+                                                                                                    line: 25,
+                                                                                                    column: 17,
+                                                                                                    offset: 376,
+                                                                                                },
+                                                                                            },
+                                                                                        },
+                                                                                        member: Identifier {
+                                                                                            name: "b",
+                                                                                            span: NodeSpan {
+                                                                                                start: TokenPosition {
+                                                                                                    line: 25,
+                                                                                                    column: 20,
+                                                                                                    offset: 379,
+                                                                                                },
+                                                                                                end: TokenPosition {
+                                                                                                    line: 25,
+                                                                                                    column: 20,
+                                                                                                    offset: 379,
+                                                                                                },
+                                                                                            },
+                                                                                        },
+                                                                                        computed: false,
+                                                                                        span: NodeSpan {
+                                                                                            start: TokenPosition {
+                                                                                                line: 25,
+                                                                                                column: 18,
+                                                                                                offset: 377,
+                                                                                            },
+                                                                                            end: TokenPosition {
+                                                                                                line: 25,
+                                                                                                column: 20,
+                                                                                                offset: 379,
+                                                                                            },
+                                                                                        },
+                                                                                    },
+                                                                                },
+                                                                                op: Times,
+                                                                                span: NodeSpan {
+                                                                                    start: TokenPosition {
+                                                                                        line: 25,
+                                                                                        column: 16,
+                                                                                        offset: 375,
+                                                                                    },
+                                                                                    end: TokenPosition {
+                                                                                        line: 25,
+                                                                                        column: 20,
+                                                                                        offset: 379,
+                                                                                    },
+                                                                                },
+                                                                            },
+                                                                            right: UnaryOp {
+                                                                                expr: MemberAccess {
+                                                                                    member_access: MemberAccess {
+                                                                                        object: Identifier {
+                                                                                            name: "t",
+                                                                                            span: NodeSpan {
+                                                                                                start: TokenPosition {
+                                                                                                    line: 25,
+                                                                                                    column: 25,
+                                                                                                    offset: 384,
+                                                                                                },
+                                                                                                end: TokenPosition {
+                                                                                                    line: 25,
+                                                                                                    column: 25,
+                                                                                                    offset: 384,
+                                                                                                },
+                                                                                            },
+                                                                                        },
+                                                                                        member: Identifier {
+                                                                                            name: "a",
+                                                                                            span: NodeSpan {
+                                                                                                start: TokenPosition {
+                                                                                                    line: 25,
+                                                                                                    column: 28,
+                                                                                                    offset: 387,
+                                                                                                },
+                                                                                                end: TokenPosition {
+                                                                                                    line: 25,
+                                                                                                    column: 28,
+                                                                                                    offset: 387,
+                                                                                                },
+                                                                                            },
+                                                                                        },
+                                                                                        computed: false,
+                                                                                        span: NodeSpan {
+                                                                                            start: TokenPosition {
+                                                                                                line: 25,
+                                                                                                column: 26,
+                                                                                                offset: 385,
+                                                                                            },
+                                                                                            end: TokenPosition {
+                                                                                                line: 25,
+                                                                                                column: 28,
+                                                                                                offset: 387,
+                                                                                            },
+                                                                                        },
+                                                                                    },
+                                                                                },
+                                                                                op: Times,
+                                                                                span: NodeSpan {
+                                                                                    start: TokenPosition {
+                                                                                        line: 25,
+                                                                                        column: 24,
+                                                                                        offset: 383,
+                                                                                    },
+                                                                                    end: TokenPosition {
+                                                                                        line: 25,
+                                                                                        column: 28,
+                                                                                        offset: 387,
+                                                                                    },
+                                                                                },
+                                                                            },
+                                                                            op: Equals,
+                                                                            span: NodeSpan {
+                                                                                start: TokenPosition {
+                                                                                    line: 25,
+                                                                                    column: 23,
+                                                                                    offset: 382,
+                                                                                },
+                                                                                end: TokenPosition {
+                                                                                    line: 25,
+                                                                                    column: 28,
+                                                                                    offset: 387,
+                                                                                },
+                                                                            },
+                                                                        },
+                                                                        body: Block {
+                                                                            block: Block {
+                                                                                statements: [
+                                                                                    Result(
+                                                                                        ResultStatement {
+                                                                                            value: Literal {
+                                                                                                literal: Int(
+                                                                                                    3,
+                                                                                                    TokenPosition {
+                                                                                                        line: 26,
+                                                                                                        column: 17,
+                                                                                                        offset: 405,
+                                                                                                    },
+                                                                                                ),
+                                                                                            },
+                                                                                            span: NodeSpan {
+                                                                                                start: TokenPosition {
+                                                                                                    line: 26,
+                                                                                                    column: 16,
+                                                                                                    offset: 404,
+                                                                                                },
+                                                                                                end: TokenPosition {
+                                                                                                    line: 26,
+                                                                                                    column: 17,
+                                                                                                    offset: 405,
+                                                                                                },
+                                                                                            },
+                                                                                        },
+                                                                                    ),
+                                                                                ],
+                                                                                span: NodeSpan {
+                                                                                    start: TokenPosition {
+                                                                                        line: 26,
+                                                                                        column: 13,
+                                                                                        offset: 401,
+                                                                                    },
+                                                                                    end: TokenPosition {
+                                                                                        line: 27,
+                                                                                        column: 11,
+                                                                                        offset: 417,
+                                                                                    },
+                                                                                },
+                                                                            },
+                                                                        },
+                                                                        else_body: Some(
+                                                                            Block {
+                                                                                block: Block {
+                                                                                    statements: [
+                                                                                        Result(
+                                                                                            ResultStatement {
+                                                                                                value: Literal {
+                                                                                                    literal: Int(
+                                                                                                        1,
+                                                                                                        TokenPosition {
+                                                                                                            line: 28,
+                                                                                                            column: 17,
+                                                                                                            offset: 440,
+                                                                                                        },
+                                                                                                    ),
+                                                                                                },
+                                                                                                span: NodeSpan {
+                                                                                                    start: TokenPosition {
+                                                                                                        line: 28,
+                                                                                                        column: 16,
+                                                                                                        offset: 439,
+                                                                                                    },
+                                                                                                    end: TokenPosition {
+                                                                                                        line: 28,
+                                                                                                        column: 17,
+                                                                                                        offset: 440,
+                                                                                                    },
+                                                                                                },
+                                                                                            },
+                                                                                        ),
+                                                                                    ],
+                                                                                    span: NodeSpan {
+                                                                                        start: TokenPosition {
+                                                                                            line: 28,
+                                                                                            column: 13,
+                                                                                            offset: 436,
+                                                                                        },
+                                                                                        end: TokenPosition {
+                                                                                            line: 29,
+                                                                                            column: 10,
+                                                                                            offset: 451,
+                                                                                        },
+                                                                                    },
+                                                                                },
+                                                                            },
+                                                                        ),
+                                                                        span: NodeSpan {
+                                                                            start: TokenPosition {
+                                                                                line: 25,
+                                                                                column: 15,
+                                                                                offset: 374,
+                                                                            },
+                                                                            end: TokenPosition {
+                                                                                line: 29,
+                                                                                column: 10,
+                                                                                offset: 451,
+                                                                            },
+                                                                        },
+                                                                    },
+                                                                },
+                                                                span: NodeSpan {
+                                                                    start: TokenPosition {
+                                                                        line: 25,
+                                                                        column: 12,
+                                                                        offset: 371,
+                                                                    },
+                                                                    end: TokenPosition {
+                                                                        line: 29,
+                                                                        column: 10,
+                                                                        offset: 451,
+                                                                    },
+                                                                },
+                                                            },
+                                                        ),
+                                                    ],
+                                                    span: NodeSpan {
+                                                        start: TokenPosition {
+                                                            line: 25,
+                                                            column: 9,
+                                                            offset: 368,
+                                                        },
+                                                        end: TokenPosition {
+                                                            line: 30,
+                                                            column: 7,
+                                                            offset: 459,
+                                                        },
+                                                    },
+                                                },
+                                            },
+                                            else_body: Some(
+                                                Block {
+                                                    block: Block {
+                                                        statements: [
+                                                            Result(
+                                                                ResultStatement {
+                                                                    value: Literal {
+                                                                        literal: Int(
+                                                                            2,
+                                                                            TokenPosition {
+                                                                                line: 31,
+                                                                                column: 13,
+                                                                                offset: 478,
+                                                                            },
+                                                                        ),
+                                                                    },
+                                                                    span: NodeSpan {
+                                                                        start: TokenPosition {
+                                                                            line: 31,
+                                                                            column: 12,
+                                                                            offset: 477,
+                                                                        },
+                                                                        end: TokenPosition {
+                                                                            line: 31,
+                                                                            column: 13,
+                                                                            offset: 478,
+                                                                        },
+                                                                    },
+                                                                },
+                                                            ),
+                                                        ],
+                                                        span: NodeSpan {
+                                                            start: TokenPosition {
+                                                                line: 31,
+                                                                column: 9,
+                                                                offset: 474,
+                                                            },
+                                                            end: TokenPosition {
+                                                                line: 32,
+                                                                column: 6,
+                                                                offset: 485,
+                                                            },
+                                                        },
+                                                    },
+                                                },
+                                            ),
+                                            span: NodeSpan {
+                                                start: TokenPosition {
+                                                    line: 24,
+                                                    column: 20,
+                                                    offset: 348,
+                                                },
+                                                end: TokenPosition {
+                                                    line: 32,
+                                                    column: 6,
+                                                    offset: 485,
+                                                },
+                                            },
+                                        },
+                                    },
+                                ),
+                                span: NodeSpan {
+                                    start: TokenPosition {
+                                        line: 24,
+                                        column: 9,
+                                        offset: 337,
+                                    },
+                                    end: TokenPosition {
+                                        line: 32,
+                                        column: 6,
+                                        offset: 485,
+                                    },
+                                },
+                            },
+                        ),
+                        Expression(
+                            FnCall {
+                                fn_call: FunctionCall {
+                                    callee: Identifier {
+                                        name: "printf",
+                                        span: NodeSpan {
+                                            start: TokenPosition {
+                                                line: 34,
+                                                column: 11,
+                                                offset: 498,
+                                            },
+                                            end: TokenPosition {
+                                                line: 34,
+                                                column: 11,
+                                                offset: 498,
+                                            },
+                                        },
+                                    },
+                                    args: [
+                                        Literal {
+                                            literal: Str(
+                                                "%d\n",
+                                                TokenPosition {
+                                                    line: 34,
+                                                    column: 18,
+                                                    offset: 505,
+                                                },
+                                            ),
+                                        },
+                                        Identifier {
+                                            name: "x",
+                                            span: NodeSpan {
+                                                start: TokenPosition {
+                                                    line: 34,
+                                                    column: 21,
+                                                    offset: 508,
+                                                },
+                                                end: TokenPosition {
+                                                    line: 34,
+                                                    column: 21,
+                                                    offset: 508,
+                                                },
+                                            },
+                                        },
+                                    ],
+                                    span: NodeSpan {
+                                        start: TokenPosition {
+                                            line: 34,
+                                            column: 12,
+                                            offset: 499,
+                                        },
+                                        end: TokenPosition {
+                                            line: 34,
+                                            column: 22,
+                                            offset: 509,
+                                        },
+                                    },
+                                },
+                            },
+                        ),
+                        Return(
+                            ReturnStatement {
+                                value: Some(
+                                    Literal {
+                                        literal: Int(
+                                            0,
+                                            TokenPosition {
+                                                line: 35,
+                                                column: 13,
+                                                offset: 523,
+                                            },
+                                        ),
+                                    },
+                                ),
+                                span: NodeSpan {
+                                    start: TokenPosition {
+                                        line: 35,
+                                        column: 12,
+                                        offset: 522,
+                                    },
+                                    end: TokenPosition {
+                                        line: 0,
+                                        column: 0,
+                                        offset: 0,
+                                    },
+                                },
+                            },
+                        ),
+                    ],
+                    span: NodeSpan {
+                        start: TokenPosition {
+                            line: 21,
+                            column: 5,
+                            offset: 267,
+                        },
+                        end: TokenPosition {
+                            line: 38,
+                            column: 1,
+                            offset: 528,
+                        },
+                    },
+                },
+                variadic: false,
+                span: NodeSpan {
+                    start: TokenPosition {
+                        line: 21,
+                        column: 5,
+                        offset: 267,
+                    },
+                    end: TokenPosition {
+                        line: 38,
+                        column: 1,
+                        offset: 528,
+                    },
+                },
+            },
+        ),
+    ],
+    submodules: [],
+    requirements: [],
+    name: "main",
+}
+Checked member: Some(RefCell { value: Type { sig: Primitive(I32) } })
+Checked member: Some(RefCell { value: Type { sig: Primitive(I32) } })
+Checked member: Some(RefCell { value: Type { sig: Primitive(I32) } })
+Checked member: Some(RefCell { value: Type { sig: Primitive(I32) } })
+Checked member: Some(RefCell { value: Type { sig: Primitive(I32) } })
+Checked member: Some(RefCell { value: Type { sig: Primitive(I32) } })

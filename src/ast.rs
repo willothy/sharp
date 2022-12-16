@@ -133,6 +133,10 @@ pub enum Expression {
     StructInitializer {
         struct_init: StructInitializer,
     },
+    SizeOfExpr {
+        expr: Box<Expression>,
+        span: NodeSpan,
+    },
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -149,7 +153,7 @@ pub enum Statement {
     Expression(Expression),
     Loop(LoopStatement),
     Return(ReturnStatement),
-    Yield(YieldStatement),
+    Result(ResultStatement),
     Continue,
     Break,
 }
@@ -191,7 +195,7 @@ pub struct ReturnStatement {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct YieldStatement {
+pub struct ResultStatement {
     pub value: Expression,
     pub span: NodeSpan,
 }

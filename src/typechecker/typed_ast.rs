@@ -48,6 +48,7 @@ pub struct TypedStructDeclaration<'ast> {
     pub name: String,
     pub fields: Vec<TypedStructField<'ast>>,
     pub ty: TypeRef<'ast>,
+    pub id: usize,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -117,6 +118,9 @@ pub enum TypedExpressionData<'ast> {
     StructInitializer {
         struct_init: TypedStructInitializer<'ast>,
     },
+    SizeOfExpr {
+        ty: TypeRef<'ast>,
+    },
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -138,7 +142,7 @@ pub enum TypedStatement<'ast> {
     Expression(TypedExpression<'ast>),
     Loop(TypedLoopStatement<'ast>),
     Return(TypedReturnStatement<'ast>),
-    Yield(TypedYieldStatement<'ast>),
+    Result(TypedResultStatement<'ast>),
     Continue,
     Break,
 }
@@ -162,7 +166,7 @@ pub struct TypedIfExpression<'ast> {
     pub condition: Box<TypedExpression<'ast>>,
     pub body: Box<TypedExpression<'ast>>,
     pub else_body: Box<Option<TypedExpression<'ast>>>,
-    pub yield_ty: Option<TypeRef<'ast>>,
+    pub result_ty: Option<TypeRef<'ast>>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -176,7 +180,7 @@ pub struct TypedReturnStatement<'ast> {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct TypedYieldStatement<'ast> {
+pub struct TypedResultStatement<'ast> {
     pub value: TypedExpression<'ast>,
 }
 
