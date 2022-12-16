@@ -14,7 +14,6 @@ mod parser;
 mod tokenizer;
 mod typechecker;
 
-const DEBUG_COMPILE_MODULE: bool = true;
 const DEBUG_WRITE_IR_FILE: bool = true;
 
 pub static mut DEBUG: bool = false;
@@ -77,12 +76,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let module_str = generated_mod.to_string();
     let mod_path = args.output;
-    if DEBUG_WRITE_IR_FILE || DEBUG_COMPILE_MODULE {
+    if DEBUG_WRITE_IR_FILE || args.compile {
         std::fs::write(&mod_path, module_str)?;
         //generated_mod.write_bitcode_to_path(mod_path.as_path());
     }
 
-    if DEBUG_COMPILE_MODULE {
+    if args.compile {
         let mod_path_str = mod_path.to_str().unwrap();
         let out_path = mod_path.with_file_name("test");
         let output = std::process::Command::new("clang")
@@ -97,6 +96,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         println!("{}", out);
         println!("{}", err);
+    }
+
+    if args.jit_exec {
+        let jit = generated_mod.create_jit_execution_engine(inkwell::OptimizationLevel::Default)?;
+        unsafe {
+            let Some(main) = generated_mod.get_function("main") else {
+                return Err("Failed to get main function".into());
+            };
+            jit.run_function(main, &[]);
+        }
     }
 
     Ok(())

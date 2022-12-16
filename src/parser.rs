@@ -459,34 +459,50 @@ impl<'parser> Parser<'parser> {
 
     pub fn assignment(&mut self) -> Result<Expression, String> {
         debug!("parser::Parser::assignment");
-        let expr = self.logical_or()?;
-        if let Expression::BinaryOp {
-            left,
-            right,
+        let left = self.logical_or()?;
+
+        if let Some(TokenKind::Operator(Operator::Assign(assign_op))) = self.current() {
+            self.advance();
+            let right = self.assignment()?;
+            return Ok(Expression::VarAssignment {
+                var_assign: VarAssignment {
+                    operator: assign_op,
+                    left: Box::from(left),
+                    right: Box::from(right),
+                    span: self.span_start()?,
+                },
+            });
+        } else {
+            return Ok(left);
+        }
+
+        /* if let Expression::BinaryOp {
+            left: binop_left,
+            right: binop_right,
             op,
             span,
-        } = expr
+        } = left
         {
             if let Operator::Assign(op) = op {
                 Ok(Expression::VarAssignment {
                     var_assign: VarAssignment {
                         operator: op,
-                        left: Box::from(self.validate_assign_target(*left)?),
-                        right,
+                        left: Box::from(self.validate_assign_target(*binop_left)?),
+                        right: binop_right,
                         span,
                     },
                 })
             } else {
                 Ok(Expression::BinaryOp {
-                    left,
-                    right,
+                    left: binop_left,
+                    right: binop_right,
                     op,
                     span,
                 })
             }
         } else {
-            Ok(expr)
-        }
+            Ok(left)
+        } */
     }
 
     fn validate_assign_target(&self, target: Expression) -> Result<Expression, String> {
@@ -744,12 +760,15 @@ impl<'parser> Parser<'parser> {
     fn logical_expr_helper(
         &mut self,
         builder: fn(&mut Parser<'parser>) -> Result<Expression, String>,
-        _op_type: OperatorType,
+        op_type: OperatorType,
     ) -> Result<Expression, String> {
         debug!("parser::Parser::logical_expr_helper");
         let mut left = builder(self)?;
 
         while let Some(TokenKind::Operator(op)) = self.current() {
+            if op.op_type() != op_type {
+                break;
+            }
             let span = self.span_start()?;
             self.advance();
             let right = builder(self)?;
@@ -767,12 +786,15 @@ impl<'parser> Parser<'parser> {
     fn binary_expr_helper(
         &mut self,
         builder: fn(&mut Parser<'parser>) -> Result<Expression, String>,
-        _op_type: OperatorType,
+        op_type: OperatorType,
     ) -> Result<Expression, String> {
         debug!("parser::Parser::binary_expr_helper");
         let mut left = builder(self)?;
 
         while let Some(TokenKind::Operator(op)) = self.current() {
+            if op.op_type() != op_type {
+                break;
+            }
             let span = self.span_start()?;
             self.advance();
             let right = builder(self)?;
@@ -978,7 +1000,6 @@ impl<'parser> Parser<'parser> {
             Some(TokenKind::Symbol(Symbol::OpenParen)) => Ok(self.paren_expr()?),
             Some(TokenKind::Identifier(i)) => {
                 if let Some(TokenKind::Symbol(Symbol::OpenBrace)) = self.lookahead() {
-                    println!("struct init 1");
                     Ok(self.struct_init()?)
                 } else {
                     Ok(self.identifier()?)

@@ -268,7 +268,7 @@ impl<'tc> TypeChecker<'tc> {
                 Ok(typed_ast::TypedStatement::Expression(expr))
             }
             Loop(loop_stmt) => {
-                let body = self.typecheck_block(&loop_stmt.body, local_ctx.clone())?;
+                let body = self.typecheck_block(&loop_stmt.body, local_ctx.enter_loop())?;
                 Ok(typed_ast::TypedStatement::Loop(
                     typed_ast::TypedLoopStatement { body },
                 ))
@@ -753,21 +753,25 @@ impl<'tc> TypeChecker<'tc> {
         let right_type =
             self.typecheck_expression(right, local_ctx.expect_result(left_type.ty.clone()))?;
         use Operator::*;
+        let (Some(left_ty), Some(right_ty)) = (&left_type.ty, &right_type.ty) else {
+            return Err("Cannot perform binary operation on non-existant types".into());
+        };
+        let (left_ty, right_ty) = (left_ty.sig(), right_ty.sig());
         let expr_ty = match op {
             Plus | Minus | Times | Divide => {
-                if left_type.ty != right_type.ty {
+                if left_ty != right_ty {
                     return Err(format!(
-                        "Cannot perform operation {} on {:?} and {:?}",
-                        op, left_type.ty, right_type.ty
+                        "Additive: Cannot perform operation {} on {:?} and {:?}",
+                        op, left_ty, right_ty
                     ));
                 }
                 left_type.ty.clone()
             }
             Equals | NotEquals | LessThan | GreaterThan | LessOrEqual | GreaterOrEqual => {
-                if left_type.ty != right_type.ty {
+                if left_ty != right_ty {
                     return Err(format!(
                         "Equality: Cannot perform operation {} on {:?} and {:?}",
-                        op, left_type.ty, right_type.ty
+                        op, left_ty, right_ty
                     ));
                 }
 
@@ -775,10 +779,10 @@ impl<'tc> TypeChecker<'tc> {
                 bool
             }
             And | Or => {
-                if left_type.ty != right_type.ty {
+                if left_ty != right_ty {
                     return Err(format!(
-                        "Cannot perform operation {} on {:?} and {:?}",
-                        op, left_type.ty, right_type.ty
+                        "And/Or: Cannot perform operation {} on {:?} and {:?}",
+                        op, left_ty, right_ty
                     ));
                 }
                 left_type.ty.clone()
@@ -787,16 +791,16 @@ impl<'tc> TypeChecker<'tc> {
                 if left_type != right_type {
                     return Err(format!(
                         "Cannot assign {:?} to {:?}",
-                        right_type.ty, left_type.ty
+                        right_ty, left_ty
                     ));
                 }
                 Ok(left_type)
             } */
             Modulo | Power | Not | BitwiseAnd | BitwiseOr | BitwiseXor | BitwiseNot
             | BitwiseLeftShift | BitwiseRightShift => {
-                if left_type.ty != right_type.ty {
+                if left_ty != right_ty {
                     return Err(format!(
-                        "Cannot perform operation {} on {:?} and {:?}",
+                        "Bitwise: Cannot perform operation {} on {:?} and {:?}",
                         op, left_type, right_type
                     ));
                 }
@@ -954,7 +958,7 @@ impl<'tc> TypeChecker<'tc> {
         let right_type = self.typecheck_expression(right, local_ctx.clone())?;
         if left_type != right_type {
             return Err(format!(
-                "Cannot perform operation {} on {:?} and {:?}",
+                "Logical op: Cannot perform operation {} on {:?} and {:?}",
                 op, left_type, right_type
             ));
         }
@@ -980,11 +984,9 @@ impl<'tc> TypeChecker<'tc> {
             return Err(format!("Cannot dereference {:?}", expr_type));
         };
         let mut ty = ty.sig();
-        println!("ty: {:?}", ty);
         if let Operator::Times = op {
             ty = ty.get_ptr_inner_ty();
         }
-        println!("ty: {:?}", ty);
 
         let ty = new_type(Type { sig: ty });
 
@@ -1127,7 +1129,6 @@ impl<'tc> TypeChecker<'tc> {
             }
 
             let checked_member = self.typecheck_expression(&member, struct_ctx)?;
-            println!("Checked member: {:?}", checked_member.ty.clone());
             Ok(TypedExpression {
                 ty: checked_member.ty.clone(),
                 expr: TypedExpressionData::MemberAccess {
@@ -1138,83 +1139,6 @@ impl<'tc> TypeChecker<'tc> {
                     },
                 },
             })
-
-            /* match &checked_member.expr {
-                TypedExpressionData::Identifier { name } => {
-                    let object_reg = local_ctx
-                        .names
-                        .get(name)
-                        .ok_or(format!("Cannot find type of object {} in this scope", name))?;
-                    let object_type = object_reg.ty.sig();
-                    Ok(TypedExpression {
-                        ty: Some(new_type(Type { sig: object_type })),
-                        expr: TypedExpressionData::MemberAccess {
-                            member_access: TypedMemberAccess {
-                                object: Box::from(checked_object),
-                                member: Box::from(checked_member),
-                                computed: *computed,
-                            },
-                        },
-                    })
-                }
-                TypedExpressionData::FnCall { fn_call } => todo!(),
-                TypedExpressionData::MemberAccess { member_access } => {
-                    // ensure object is a struct type
-                    // ensure object has a member of the given name
-
-                    // add struct fields to local context
-                    // typecheck member expression
-                    // return member expression
-                    let checked_access =
-                        self.typecheck_member_access(member_access, struct_ctx.clone())?;
-
-                    let Some(ty) = checked_access.ty else {
-                        return Err(format!(
-                            "Cannot access member of non-struct type {:?}",
-                            checked_access.ty
-                        ));
-                    };
-                    let sig = ty.sig();
-                    if let TypeSignature::Struct(Some(structure)) = sig {
-                        if let Expression::Identifier { name, span } = &member {
-                            let member_type = structure.fields.get(name).ok_or(format!(
-                                "Cannot find field {} in struct {}",
-                                name, structure.name
-                            ))?;
-                            // add struct fields to local context
-                            for (field_name, field_type) in &structure.fields {
-                                local_ctx.names.insert(
-                                    field_name.clone(),
-                                    Name {
-                                        ty: field_type.ty.clone(),
-                                    },
-                                );
-                            }
-                            let member_expr = self.typecheck_expression(&member, local_ctx)?;
-                            Ok(TypedExpression {
-                                ty: Some(member_type.ty.clone()),
-                                expr: TypedExpressionData::MemberAccess {
-                                    member_access: TypedMemberAccess {
-                                        object: Box::from(checked_object),
-                                        member: Box::from(member_expr),
-                                        computed: *computed,
-                                    },
-                                },
-                            })
-                        } else if let Expression::FnCall { fn_call } = member {
-                            unimplemented!("Struct member functions are not yet supported");
-                        } else {
-                            return Err(format!(
-                                "Unsupported member access expression: {:?}",
-                                member
-                            ));
-                        }
-                    } else {
-                        unimplemented!();
-                    }
-                }
-                _ => todo!(),
-            } */
         } else if let TypeSignature::Pointer(pointer) = &sig {
             if let TypeSignature::Struct(id) = pointer.target.as_ref() {
                 let mut struct_ctx = LocalTypecheckContext {
@@ -1251,7 +1175,6 @@ impl<'tc> TypeChecker<'tc> {
                 }
 
                 let checked_member = self.typecheck_expression(&member, struct_ctx)?;
-                println!("Checked member: {:?}", checked_member.ty.clone());
                 let Some(ty) = checked_member.ty.clone() else {
                     return Err(format!("Cannot access member of {:?}", sig));
                 };
@@ -1273,197 +1196,5 @@ impl<'tc> TypeChecker<'tc> {
         } else {
             return Err(format!("Cannot access member of {:?}", sig));
         }
-
-        /*     match object.clone() {
-               Expression::Identifier { name, span } => {
-                   // If the object is an identifier or function call, we can check the type of the member
-                   let object_reg = local_ctx
-                       .names
-                       .get(&name)
-                       .ok_or(format!("Cannot find type of object {} in this scope", name))?;
-                   let object_type = object_reg.ty.clone().sig();
-
-                   if let TypeSignature::Struct(Some(structure)) = object_type {
-                       if let Expression::Identifier { name, span } = &member {
-                           let member_type = structure.fields.get(name).ok_or(format!(
-                               "Cannot find field {} in struct {}",
-                               name, structure.name
-                           ))?;
-                           // add struct fields to local context
-                           for (field_name, field_type) in &structure.fields {
-                               local_ctx.names.insert(
-                                   field_name.clone(),
-                                   Name {
-                                       ty: field_type.ty.clone(),
-                                   },
-                               );
-                           }
-                           let member_expr = self.typecheck_expression(&member, local_ctx)?;
-                           Ok(TypedExpression {
-                               ty: Some(new_type(Type {
-                                   sig: member_type.ty.sig().wrap_in_ptr(),
-                               })),
-                               expr: TypedExpressionData::MemberAccess {
-                                   member_access: TypedMemberAccess {
-                                       object: Box::from(checked_object),
-                                       member: Box::from(member_expr),
-                                       computed: *computed,
-                                   },
-                               },
-                           })
-                       } else if let Expression::FnCall { fn_call } = member {
-                           // Ensure object is a struct type
-                           // Ensure object has a member function of the given name
-                           let FunctionCall { callee, args, span } = fn_call;
-
-                           match *callee {
-                               Expression::Identifier { name, span } => {
-                                   let member_fn = structure
-                                       .methods
-                                       .get(&name)
-                                       .ok_or(format!(
-                                           "Cannot find function {} in struct {}",
-                                           name, structure.name
-                                       ))?
-                                       .clone();
-                                   let mut typed_args = Vec::new();
-                                   for (arg, arg_type) in args.iter().zip(&member_fn.params) {
-                                       let checked_arg =
-                                           self.typecheck_expression(arg, local_ctx.clone())?;
-                                       if checked_arg.ty
-                                           != Some(self.ctx.get_type(arg_type.type_name.clone())?)
-                                       {
-                                           return Err(format!(
-                                               "Expected argument {} to be of type {:?}, but got {:?}",
-                                               arg_type.name, arg_type.type_name, checked_arg.ty
-                                           ));
-                                       }
-                                       typed_args.push(checked_arg);
-                                   }
-                                   /* Ok(TypedExpression {
-                                       ty: Some(self.ctx.get_type(member_fn.return_type.clone())?),
-                                       expr: TypedExpressionData::FnCall {
-                                           fn_call: TypedFunctionCall {
-                                               callee: Box::from(checked_object),
-                                               args: typed_args,
-                                               fn_ty: Type {
-                                                   sig: TypeSignature::Function(FunctionType {
-                                                       params: {
-                                                           let p = member_fn
-                                                               .params
-                                                               .iter()
-                                                               .map(|param| {
-                                                                   self.ctx.get_type(
-                                                                       param.type_name.clone(),
-                                                                   )
-                                                               })
-                                                               .collect::<Result<Vec<_>, _>>()?;
-                                                           HashMap::from(p)
-                                                       },
-                                                       return_type: member_fn.return_type,
-                                                       variadic: false,
-                                                   }),
-                                               },
-                                           },
-                                       },
-                                   }) */
-                                   todo!()
-                               }
-                               _ => unimplemented!(),
-                           }
-                       } else {
-                           return Err(format!(
-                               "Unsupported member access expression: {:?}",
-                               member
-                           ));
-                       }
-                   } else {
-                       unimplemented!("Unexpected object type {:?}", object_type)
-                   }
-               }
-               Expression::FnCall { fn_call } => {
-                   // Ensure object is a struct type
-                   // Ensure object has a member function of the given name
-
-                   let FunctionCall { callee, args, span } = fn_call;
-                   let checked_callee = self.typecheck_expression(&callee, local_ctx.clone())?;
-
-                   todo!()
-               }
-               Expression::MemberAccess { member_access } => {
-                   // ensure object is a struct type
-                   // ensure object has a member of the given name
-
-                   // add struct fields to local context
-                   // typecheck member expression
-                   // return member expression
-                   let checked_access =
-                       self.typecheck_member_access(&member_access, local_ctx.clone())?;
-
-                   let Some(ty) = checked_access.ty else {
-                       return Err(format!(
-                           "Cannot access member of non-struct type {:?}",
-                           checked_access.ty
-                       ));
-                   };
-                   let sig = ty.sig();
-                   if let TypeSignature::Struct(Some(structure)) = sig {
-                       if let Expression::Identifier { name, span } = &member {
-                           let member_type = structure.fields.get(name).ok_or(format!(
-                               "Cannot find field {} in struct {}",
-                               name, structure.name
-                           ))?;
-                           // add struct fields to local context
-                           for (field_name, field_type) in &structure.fields {
-                               local_ctx.names.insert(
-                                   field_name.clone(),
-                                   Name {
-                                       ty: field_type.ty.clone(),
-                                   },
-                               );
-                           }
-                           let member_expr = self.typecheck_expression(&member, local_ctx)?;
-                           Ok(TypedExpression {
-                               ty: Some(member_type.ty.clone()),
-                               expr: TypedExpressionData::MemberAccess {
-                                   member_access: TypedMemberAccess {
-                                       object: Box::from(checked_object),
-                                       member: Box::from(member_expr),
-                                       computed: *computed,
-                                   },
-                               },
-                           })
-                       } else if let Expression::FnCall { fn_call } = member {
-                           unimplemented!("Struct member functions are not yet supported");
-                       } else {
-                           return Err(format!(
-                               "Unsupported member access expression: {:?}",
-                               member
-                           ));
-                       }
-                   } else {
-                       unimplemented!();
-                   }
-               }
-               Expression::UnaryOp { expr, op, span } => {
-                   let checked_expr = self.typecheck_expression(&expr, local_ctx.clone())?;
-                   let Some(ty) = &checked_expr.ty else {
-                       return Err(format!(
-                           "Cannot apply unary operator to non-numeric type {:?}",
-                           checked_expr.ty
-                       ));
-                   };
-                   let sig = ty.sig();
-                   Ok(TypedExpression {
-                       ty: Some(ty.clone()),
-                       expr: TypedExpressionData::UnaryOp {
-                           expr: Box::from(checked_expr),
-                           op,
-                       },
-                   })
-               }
-               _ => unimplemented!("Member access on {:?} is not supported yet", object),
-           }
-        */
     }
 }

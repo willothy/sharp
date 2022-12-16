@@ -50,6 +50,12 @@ impl<'ctx> LocalTypecheckContext<'ctx> {
         new.result_type = ty;
         new
     }
+
+    pub fn enter_loop(&self) -> Self {
+        let mut new = self.clone();
+        new.in_loop = true;
+        new
+    }
 }
 
 pub type TypeRef<'type_ref> = Rc<RefCell<Type<'type_ref>>>;

@@ -3,6 +3,7 @@
 use std::{collections::HashMap, rc::Rc};
 
 use inkwell::{
+    basic_block::BasicBlock,
     types::{AnyTypeEnum, BasicMetadataTypeEnum, BasicType, BasicTypeEnum, PointerType, VoidType},
     values::{BasicValueEnum, FunctionValue, PointerValue},
     AddressSpace,
@@ -32,6 +33,13 @@ pub struct LocalCodegenContext<'ctx> {
     pub return_type: Option<TypeSignature<'ctx>>,
     pub result_type: Option<TypeSignature<'ctx>>,
     pub current_fn: Option<FunctionValue<'ctx>>,
+    pub loop_ctx: Option<LoopContext<'ctx>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LoopContext<'ctx> {
+    pub body_block: BasicBlock<'ctx>,
+    pub exit_block: BasicBlock<'ctx>,
 }
 
 impl<'ctx> LocalCodegenContext<'ctx> {
@@ -160,7 +168,7 @@ impl<'ctx> CodegenContext<'ctx> {
         &self,
         prim: &PrimitiveType,
     ) -> Result<BasicTypeEnum<'ctx>, String> {
-        println!("primitive_to_llvm_ty: {:?}", prim);
+        debug!(format!("primitive_to_llvm_ty: {:?}", prim));
         match prim {
             PrimitiveType::I32 => Ok(self.llvm_ctx.i32_type().into()),
             PrimitiveType::I64 => Ok(self.llvm_ctx.i64_type().into()),
@@ -238,13 +246,11 @@ impl<'ctx> CodegenContext<'ctx> {
         s: &StructType<'ctx>,
         structs: &HashMap<TypeId, StructType<'ctx>>,
     ) -> Result<BasicTypeEnum<'ctx>, String> {
-        println!("struct_to_llvm_ty: {:?}", s.id);
-
         let opaque_struct_t = if let Some(t) = self.llvm_ctx.get_struct_type(s.name.as_str()) {
-            println!("Struct {:?}: already defined", t.get_name());
+            debug!(format!("Struct {:?}: already defined", t.get_name()));
             return Ok(t.into());
         } else {
-            println!("Struct {:?}: not defined", s.name);
+            debug!(format!("Struct {:?}: not defined", s.name));
             self.llvm_ctx.opaque_struct_type(s.name.as_str())
         };
 
@@ -280,7 +286,6 @@ impl<'ctx> CodegenContext<'ctx> {
                 TypeSignature::Pointer(ptr) => {
                     let base = ptr.base_type();
                     let depth = ptr.depth();
-                    println!("Pointer: {:?} {:?}", base, depth);
                     let base_llvm;
                     if let TypeSignature::Struct(id) = base {
                         if id == s.id {
@@ -306,7 +311,6 @@ impl<'ctx> CodegenContext<'ctx> {
                             .ptr_type(inkwell::AddressSpace::Generic)
                             .as_basic_type_enum();
                     }
-                    println!("IOAWHDOIAWD");
                     full_type.into()
                     /* // TODO!!!
                     self.llvm_ctx
