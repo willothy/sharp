@@ -218,12 +218,7 @@ impl<'tc> TypeChecker<'tc> {
         var_stmt: &VarDeclaration,
         local_ctx: &mut LocalTypecheckContext<'tc>,
     ) -> Result<TypedStatement<'tc>, String> {
-        let VarDeclaration {
-            name,
-            type_name,
-            initializer,
-            span: _,
-        } = var_stmt;
+        let VarDeclaration { name, type_name, initializer, .. } = var_stmt;
         let ty = self.ctx.get_type(type_name.clone())?;
         let initializer: Option<TypedExpression> = if let Some(init) = initializer {
             Some(self.typecheck_expression(init, local_ctx.expect_result(Some(ty.clone()).into()))?)
@@ -327,22 +322,12 @@ impl<'tc> TypeChecker<'tc> {
     ) -> Result<TypedExpression<'tc>, String> {
         debug!(format!("typechecker::typecheck_expression: {:?}", expr));
         match expr {
-            Expression::BinaryOp {
-                left,
-                right,
-                op,
-                span: _,
-            } => self.typecheck_binary_op(left, right, op, local_ctx),
-            Expression::LogicalOp {
-                left,
-                right,
-                op,
-                span: _,
-            } => self.typecheck_logical_op(left, right, op, local_ctx),
-            Expression::UnaryOp { expr, op, span: _ } => {
+            Expression::BinaryOp { left, right, op, .. } => self.typecheck_binary_op(left, right, op, local_ctx),
+            Expression::LogicalOp { left, right, op, .. } => self.typecheck_logical_op(left, right, op, local_ctx),
+            Expression::UnaryOp { expr, op, .. } => {
                 self.typecheck_unary_op(expr, op, local_ctx)
             }
-            Expression::Identifier { name, span: _ } => {
+            Expression::Identifier { name, .. } => {
                 let var = local_ctx
                     .names
                     .get(name)
@@ -542,8 +527,8 @@ impl<'tc> TypeChecker<'tc> {
             Expression::StructInitializer { struct_init } => {
                 self.typecheck_struct_init(struct_init, local_ctx)
             }
-            Expression::SizeOfExpr { expr, span: _ } => {
-                if let Expression::Identifier { name, span: _ } = expr.as_ref() {
+            Expression::SizeOfExpr { expr, .. } => {
+                if let Expression::Identifier { name, .. } = expr.as_ref() {
                     let ty = self.ctx.get_type(name.clone())?;
                     Ok(TypedExpression {
                         ty: Some(self.ctx.get_type("i64".to_string())?),
@@ -553,11 +538,7 @@ impl<'tc> TypeChecker<'tc> {
                     return Err("Invalid argument to sizeof".to_string());
                 }
             }
-            Expression::AsExpr {
-                expr,
-                type_name,
-                span: _,
-            } => {
+            Expression::AsExpr { expr, type_name, .. } => {
                 let expr = self.typecheck_expression(expr, local_ctx)?;
                 let as_ty = self.ctx.get_type(type_name.clone())?;
                 let Some(expr_ty) = expr.ty.clone() else {
@@ -910,7 +891,7 @@ impl<'tc> TypeChecker<'tc> {
     ) -> Result<TypedExpression<'tc>, String> {
         debug!("typechecker::typecheck_fn_call");
         let fn_name = match *fn_call.callee.clone() {
-            Expression::Identifier { name, span: _ } => name,
+            Expression::Identifier { name, .. } => name,
             _ => return Err("Unsupported callee type".into()),
         };
         let fn_type = local_ctx
@@ -1029,11 +1010,7 @@ impl<'tc> TypeChecker<'tc> {
         mut local_ctx: LocalTypecheckContext<'tc>,
     ) -> Result<TypedExpression<'tc>, String> {
         debug!("typechecker::typecheck_struct_init");
-        let StructInitializer {
-            struct_name,
-            fields,
-            span: _,
-        } = struct_init;
+        let StructInitializer { struct_name, fields, .. } = struct_init;
         let struct_type = self.ctx.get_type(struct_name.clone())?;
         let struct_sig = struct_type.sig();
 
@@ -1047,12 +1024,7 @@ impl<'tc> TypeChecker<'tc> {
 
         let mut typed_fields = Vec::new();
         for field in fields {
-            let StructInitializerField {
-                field_name,
-                value,
-                idx: _,
-                span: _,
-            } = field;
+            let StructInitializerField { field_name, value, .. } = field;
 
             let expected_field = decl_fields.get(field_name).ok_or(format!(
                 "Field {} does not exist in struct {}",
@@ -1096,12 +1068,7 @@ impl<'tc> TypeChecker<'tc> {
         local_ctx: LocalTypecheckContext<'tc>,
     ) -> Result<TypedExpression<'tc>, String> {
         debug!("typechecker::typecheck_member_access");
-        let MemberAccess {
-            object,
-            member,
-            computed,
-            span: _,
-        } = member_access;
+        let MemberAccess { object, member, computed, .. } = member_access;
 
         if *computed {
             unimplemented!("Computed member access is not supported yet");

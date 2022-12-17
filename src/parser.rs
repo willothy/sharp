@@ -495,13 +495,9 @@ impl<'parser> Parser<'parser> {
     fn validate_assign_target(&self, target: Expression) -> Result<Expression, String> {
         debug!("parser::Parser::validate_assign_target");
         match &target {
-            Expression::Identifier { name: _, span: _ } => Ok(target),
-            Expression::MemberAccess { member_access: _ } => Ok(target),
-            Expression::UnaryOp {
-                expr: _,
-                op,
-                span: _,
-            } => {
+            Expression::Identifier { .. } => Ok(target),
+            Expression::MemberAccess { .. } => Ok(target),
+            Expression::UnaryOp { op, .. } => {
                 if let Operator::Times = op {
                     Ok(target)
                 } else {
