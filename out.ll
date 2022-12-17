@@ -50,46 +50,48 @@ entry:
   %b = alloca i32, align 4
   store i32 3, i32* %b, align 4
   %head1 = load %node*, %node** %head, align 8
-  %push_front_call = call %node* @push_front(%node* %head1, i32 2)
+  %a2 = load i32, i32* %a, align 4
+  %push_front_call = call %node* @push_front(%node* %head1, i32 %a2)
   store %node* %push_front_call, %node** %head, align 8
-  %head2 = load %node*, %node** %head, align 8
   %head3 = load %node*, %node** %head, align 8
-  %push_front_call4 = call %node* @push_front(%node* %head3, i32 3)
-  store %node* %push_front_call4, %node** %head, align 8
-  %head5 = load %node*, %node** %head, align 8
-  %head6 = load %node*, %node** %head, align 8
-  %node.value = getelementptr inbounds %node, %node* %head6, i32 0, i32 0
+  %head4 = load %node*, %node** %head, align 8
+  %b5 = load i32, i32* %b, align 4
+  %push_front_call6 = call %node* @push_front(%node* %head4, i32 %b5)
+  store %node* %push_front_call6, %node** %head, align 8
+  %head7 = load %node*, %node** %head, align 8
+  %head8 = load %node*, %node** %head, align 8
+  %node.value = getelementptr inbounds %node, %node* %head8, i32 0, i32 0
   %"*i32_deref" = load i32, i32* %node.value, align 4
   %printf_call = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([10 x i8], [10 x i8]* @str, i32 0, i32 0), i32 %"*i32_deref")
-  %head7 = load %node*, %node** %head, align 8
-  %node.next = getelementptr inbounds %node, %node* %head7, i32 0, i32 1
+  %head9 = load %node*, %node** %head, align 8
+  %node.next = getelementptr inbounds %node, %node* %head9, i32 0, i32 1
   %"**node_deref" = load %node*, %node** %node.next, align 8
-  %node.value8 = getelementptr inbounds %node, %node* %"**node_deref", i32 0, i32 0
-  %"*i32_deref9" = load i32, i32* %node.value8, align 4
-  %printf_call10 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([15 x i8], [15 x i8]* @str.1, i32 0, i32 0), i32 %"*i32_deref9")
-  %head11 = load %node*, %node** %head, align 8
-  %node.next12 = getelementptr inbounds %node, %node* %head11, i32 0, i32 1
-  %"**node_deref13" = load %node*, %node** %node.next12, align 8
-  %node.next14 = getelementptr inbounds %node, %node* %"**node_deref13", i32 0, i32 1
+  %node.value10 = getelementptr inbounds %node, %node* %"**node_deref", i32 0, i32 0
+  %"*i32_deref11" = load i32, i32* %node.value10, align 4
+  %printf_call12 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([15 x i8], [15 x i8]* @str.1, i32 0, i32 0), i32 %"*i32_deref11")
+  %head13 = load %node*, %node** %head, align 8
+  %node.next14 = getelementptr inbounds %node, %node* %head13, i32 0, i32 1
   %"**node_deref15" = load %node*, %node** %node.next14, align 8
-  %node.value16 = getelementptr inbounds %node, %node* %"**node_deref15", i32 0, i32 0
-  %"*i32_deref17" = load i32, i32* %node.value16, align 4
-  %printf_call18 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([20 x i8], [20 x i8]* @str.2, i32 0, i32 0), i32 %"*i32_deref17")
-  %head19 = load %node*, %node** %head, align 8
-  %"*node_deref" = load %node, %node* %head19, align 8
+  %node.next16 = getelementptr inbounds %node, %node* %"**node_deref15", i32 0, i32 1
+  %"**node_deref17" = load %node*, %node** %node.next16, align 8
+  %node.value18 = getelementptr inbounds %node, %node* %"**node_deref17", i32 0, i32 0
+  %"*i32_deref19" = load i32, i32* %node.value18, align 4
+  %printf_call20 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([20 x i8], [20 x i8]* @str.2, i32 0, i32 0), i32 %"*i32_deref19")
+  %head21 = load %node*, %node** %head, align 8
+  %"*node_deref" = load %node, %node* %head21, align 8
   %next = extractvalue %node %"*node_deref", 1
-  %"*node_deref20" = load %node, %node* %next, align 8
-  %next21 = extractvalue %node %"*node_deref20", 1
-  %ptr_cast = bitcast %node* %next21 to i8*
+  %"*node_deref22" = load %node, %node* %next, align 8
+  %next23 = extractvalue %node %"*node_deref22", 1
+  %ptr_cast = bitcast %node* %next23 to i8*
   call void @free(i8* %ptr_cast)
-  %head22 = load %node*, %node** %head, align 8
-  %"*node_deref23" = load %node, %node* %head22, align 8
-  %next24 = extractvalue %node %"*node_deref23", 1
-  %ptr_cast25 = bitcast %node* %next24 to i8*
-  call void @free(i8* %ptr_cast25)
-  %head26 = load %node*, %node** %head, align 8
-  %ptr_cast27 = bitcast %node* %head26 to i8*
+  %head24 = load %node*, %node** %head, align 8
+  %"*node_deref25" = load %node, %node* %head24, align 8
+  %next26 = extractvalue %node %"*node_deref25", 1
+  %ptr_cast27 = bitcast %node* %next26 to i8*
   call void @free(i8* %ptr_cast27)
+  %head28 = load %node*, %node** %head, align 8
+  %ptr_cast29 = bitcast %node* %head28 to i8*
+  call void @free(i8* %ptr_cast29)
   ret void
 }
 

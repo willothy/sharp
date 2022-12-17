@@ -27,8 +27,8 @@ fn node_test() {
     let i32 a = 2;
     let i32 b = 3;
 
-    head = push_front(head, 2);
-    head = push_front(head, 3);
+    head = push_front(head, a);
+    head = push_front(head, b);
 
     printf("head: %d\n", *head.value);
     printf("head.next: %d\n", *(*head.next).value);

@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 
-use linked_hash_map::LinkedHashMap;
-
 use crate::tokenizer::{AssignmentOperator, Literal, Operator};
 
 use super::{

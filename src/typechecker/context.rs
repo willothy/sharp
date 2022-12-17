@@ -1,9 +1,5 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use linked_hash_map::LinkedHashMap;
-
-use crate::ast;
-
 use super::type_sig::{Name, PointerType, PrimitiveType, StructType, Type, TypeSignature};
 
 pub type TypeId = usize;
@@ -38,15 +34,6 @@ impl<'ctx> From<&TypeCheckContext<'ctx>> for LocalTypecheckContext<'ctx> {
 }
 
 impl<'ctx> LocalTypecheckContext<'ctx> {
-    pub fn new() -> Self {
-        Self {
-            names: HashMap::new(),
-            return_type: None,
-            result_type: None,
-            in_loop: false,
-        }
-    }
-
     pub fn expect_result(&self, ty: Option<TypeRef<'ctx>>) -> Self {
         let mut new = self.clone();
         new.result_type = ty;
@@ -177,23 +164,6 @@ impl<'ctx> TypeCheckContext<'ctx> {
         }
         self.types.insert(type_name, type_);
         Ok(())
-    }
-
-    pub fn update_type(&mut self, type_name: String, type_: TypeRef<'ctx>) -> Result<(), String> {
-        if !self.types.contains_key(&type_name) {
-            return Err(format!(
-                "Type {} does not exist {}:{}",
-                type_name,
-                file!(),
-                line!()
-            ));
-        }
-        self.types.insert(type_name, type_);
-        Ok(())
-    }
-
-    pub fn types(&self) -> impl Iterator<Item = (&String, &TypeRef<'ctx>)> {
-        self.types.iter()
     }
 
     pub(crate) fn get_next_struct_id(&mut self) -> usize {

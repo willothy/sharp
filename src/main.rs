@@ -1,9 +1,6 @@
 // Author: Will Hopkins
 
-use std::{
-    fs::{self, File},
-    io::Read,
-};
+use std::fs;
 
 use crate::{codegen::generator::CodeGenerator, tokenizer::Span};
 

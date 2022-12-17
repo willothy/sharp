@@ -5,10 +5,9 @@ use std::{collections::HashMap, rc::Rc};
 use inkwell::{
     basic_block::BasicBlock,
     types::{AnyTypeEnum, BasicMetadataTypeEnum, BasicType, BasicTypeEnum, PointerType, VoidType},
-    values::{BasicValueEnum, FunctionValue, PointerValue},
+    values::{FunctionValue, PointerValue},
     AddressSpace,
 };
-use linked_hash_map::LinkedHashMap;
 
 use crate::{
     debug, debugln,
@@ -56,10 +55,6 @@ impl<'ctx> LocalCodegenContext<'ctx> {
         self.types.insert(t.ty.clone(), Rc::from(t));
     }
 
-    pub fn get_type(&self, sig: &TypeSignature<'ctx>) -> Option<&Rc<CodegenType<'ctx>>> {
-        self.types.get(sig)
-    }
-
     pub fn get_base_type(&self, sig: &TypeSignature<'ctx>) -> Option<Rc<CodegenType<'ctx>>> {
         if let TypeSignature::Pointer(p) = sig {
             let Some(t) = self.get_base_type(&p.target) else {
@@ -104,13 +99,12 @@ impl<'ctx> CodegenContext<'ctx> {
         builder: inkwell::builder::Builder<'ctx>,
         tc_mod: &'ctx typechecker::TypeCheckModule<'ctx>,
     ) -> Self {
-        let mut ctx = Self {
+        Self {
             llvm_ctx,
             llvm_module: module,
             ir_builder: builder,
             tc_mod,
-        };
-        ctx
+        }
     }
 
     pub fn add_primitive_types(&self, local_ctx: &mut LocalCodegenContext<'ctx>) {
@@ -422,7 +416,7 @@ impl<'ctx> CodegenContext<'ctx> {
                 let struct_type = self.struct_to_llvm_ty(&struct_ptr, structs)?;
                 Ok(struct_type.ptr_type(AddressSpace::Generic).into())
             }
-            TypeSignature::Function(fn_type) => {
+            TypeSignature::Function(_) => {
                 todo!()
             }
             TypeSignature::Pointer(ptr) => {
@@ -431,7 +425,6 @@ impl<'ctx> CodegenContext<'ctx> {
                 Ok(target_type.basic()?.ptr_type(AddressSpace::Generic).into())
             }
             TypeSignature::Void => unreachable!(),
-            t => Err(format!("Unsupported type: {:?}", t)),
         }
     }
 }
@@ -504,6 +497,7 @@ impl<'ctx> CodegenLLVMType<'ctx> {
         }
     }
 
+    #[allow(unused)]
     pub fn void(&self) -> Result<VoidType<'ctx>, String> {
         match self {
             CodegenLLVMType::Void(void) => Ok(*void),
@@ -578,6 +572,7 @@ impl<'ctx> CodegenLLVMType<'ctx> {
         }
     }
 
+    #[allow(unused)]
     pub fn array_type(&self) -> Result<inkwell::types::ArrayType<'ctx>, String> {
         match self {
             CodegenLLVMType::Basic(basic) => match basic {
@@ -593,6 +588,7 @@ impl<'ctx> CodegenLLVMType<'ctx> {
         }
     }
 
+    #[allow(unused)]
     pub fn vector_type(&self) -> Result<inkwell::types::VectorType<'ctx>, String> {
         match self {
             CodegenLLVMType::Basic(basic) => match basic {
@@ -664,22 +660,4 @@ impl<'ctx> GetLLVMType<'ctx> for Rc<CodegenType<'ctx>> {
             )),
         }
     }
-}
-
-pub fn to_basic(ty: AnyTypeEnum) -> Result<BasicTypeEnum, String> {
-    let t = match ty {
-        AnyTypeEnum::ArrayType(array_t) => array_t.into(),
-        AnyTypeEnum::FloatType(float_t) => float_t.into(),
-        AnyTypeEnum::FunctionType(fn_t) => {
-            return Err("Function type cannot be converted to basic type".into())
-        }
-        AnyTypeEnum::IntType(int_t) => int_t.into(),
-        AnyTypeEnum::PointerType(ptr_t) => ptr_t.into(),
-        AnyTypeEnum::StructType(struct_t) => struct_t.into(),
-        AnyTypeEnum::VectorType(vector_t) => vector_t.into(),
-        AnyTypeEnum::VoidType(void_t) => {
-            return Err("Void type cannot be converted to basic type".into())
-        }
-    };
-    Ok(t)
 }

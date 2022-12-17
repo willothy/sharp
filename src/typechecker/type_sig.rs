@@ -1,8 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, hash::Hash, rc::Rc};
-
-use linked_hash_map::LinkedHashMap;
-
-use crate::ast::FunctionDefinition;
+use std::{collections::HashMap, hash::Hash};
 
 use super::{
     context::{TypeId, TypeRef},
@@ -25,12 +21,6 @@ impl<'t> Eq for Type<'t> {}
 impl<'t> Type<'t> {
     pub fn new(sig: TypeSignature<'t>) -> Self {
         Self { sig }
-    }
-
-    pub fn empty() -> Self {
-        Self {
-            sig: TypeSignature::Void,
-        }
     }
 }
 
@@ -79,37 +69,6 @@ pub enum TypeSignature<'t> {
 }
 
 impl<'t> TypeSignature<'t> {
-    pub fn is_void(&self) -> bool {
-        matches!(self, TypeSignature::Void)
-    }
-
-    pub fn is_primitive(&self) -> bool {
-        matches!(self, TypeSignature::Primitive(_))
-    }
-
-    pub fn is_struct(&self) -> bool {
-        matches!(self, TypeSignature::Struct(_))
-    }
-
-    pub fn is_function(&self) -> bool {
-        matches!(self, TypeSignature::Function(_))
-    }
-
-    pub fn struct_id(&self) -> Result<TypeId, String> {
-        if let TypeSignature::Struct(id) = self {
-            Ok(*id)
-        } else {
-            Err(format!("Type {:?} is not a struct", self))
-        }
-    }
-
-    pub fn get_return_type(&'t self) -> Result<Option<TypeRef>, String> {
-        match self {
-            TypeSignature::Function(f) => Ok(f.return_type.clone()),
-            _ => Err(format!("Type {:?} is not a function", self)),
-        }
-    }
-
     pub fn get_ptr_inner_ty(&self) -> TypeSignature<'t> {
         if let TypeSignature::Pointer(p) = self {
             p.target.as_ref().clone()
@@ -148,7 +107,7 @@ impl<'t> TypeSignature<'t> {
             TypeSignature::Struct(id) => {
                 format!("{}", structs.get(id).unwrap().name)
             }
-            TypeSignature::Function(f) => "fn".into(),
+            TypeSignature::Function(_) => "fn".into(),
             TypeSignature::Void => "void".into(),
             TypeSignature::Pointer(p) => {
                 format!("*{}", p.target.string_repr(structs))
@@ -159,9 +118,9 @@ impl<'t> TypeSignature<'t> {
     pub fn can_cast_to(&self, other: &Self) -> bool {
         match (self, other) {
             (TypeSignature::Primitive(p1), TypeSignature::Primitive(p2)) => p1.can_cast_to_prim(p2),
-            (TypeSignature::Pointer(p1), TypeSignature::Pointer(p2)) => true,
+            (TypeSignature::Pointer(_), TypeSignature::Pointer(_)) => true,
             (TypeSignature::Pointer(p1), TypeSignature::Primitive(p2)) => p1.can_cast_to_prim(p2),
-            (TypeSignature::Primitive(p1), TypeSignature::Pointer(p2)) => p1.can_cast_to_ptr(),
+            (TypeSignature::Primitive(p1), TypeSignature::Pointer(_)) => p1.can_cast_to_ptr(),
             _ => false,
         }
     }

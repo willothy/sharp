@@ -1,14 +1,11 @@
 // Author: Will Hopkins
 
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
-
-use linked_hash_map::LinkedHashMap;
+use std::collections::HashMap;
 
 use crate::{
     ast::{
-        self, Block, Declaration, Expression, FunctionCall, FunctionDeclaration,
-        FunctionDefinition, MemberAccess, StructDeclaration, StructInitializer,
-        StructInitializerField, VarDeclaration,
+        self, Block, Declaration, Expression, FunctionDeclaration, FunctionDefinition,
+        MemberAccess, StructDeclaration, StructInitializer, StructInitializerField, VarDeclaration,
     },
     debug,
     tokenizer::{Literal, Operator},
@@ -20,10 +17,8 @@ use crate::{
 };
 
 use super::{
-    context::{LocalTypecheckContext, TypeCheckContext, TypeRef, TypeSig},
-    type_sig::{
-        self, FunctionType, PrimitiveType, StructType, TypedFunctionParameter, TypedStructField,
-    },
+    context::{LocalTypecheckContext, TypeCheckContext, TypeSig},
+    type_sig::{self, FunctionType, StructType, TypedFunctionParameter, TypedStructField},
     typed_ast::{
         self, TypedBlock, TypedDeclaration, TypedExpressionData, TypedFunctionCall,
         TypedFunctionDeclaration, TypedFunctionDefinition, TypedIfExpression, TypedLiteral,
@@ -195,20 +190,20 @@ impl<'tc> TypeChecker<'tc> {
     ) -> Result<TypedBlock<'tc>, String> {
         debug!("typechecker::typecheck_block");
         let mut typed_statements = Vec::new();
-        let mut hasResult = false;
+        let mut has_result = false;
         for statement in &body.statements {
             let typed_statement = self.typecheck_statement(statement, &mut local_ctx)?;
             // check if resulted
             if let TypedStatement::Result(_) = typed_statement {
-                hasResult = true;
+                has_result = true;
             }
             typed_statements.push(typed_statement);
         }
 
         // make sure there's a result if one is expected
-        if hasResult && local_ctx.result_type.is_none() {
+        if has_result && local_ctx.result_type.is_none() {
             return Err("Unexpected result statement".into());
-        } else if !hasResult && local_ctx.result_type.is_some() {
+        } else if !has_result && local_ctx.result_type.is_some() {
             return Err("Expected result statement".into());
         }
 
@@ -227,7 +222,7 @@ impl<'tc> TypeChecker<'tc> {
             name,
             type_name,
             initializer,
-            span,
+            span: _,
         } = var_stmt;
         let ty = self.ctx.get_type(type_name.clone())?;
         let initializer: Option<TypedExpression> = if let Some(init) = initializer {
@@ -336,16 +331,18 @@ impl<'tc> TypeChecker<'tc> {
                 left,
                 right,
                 op,
-                span,
+                span: _,
             } => self.typecheck_binary_op(left, right, op, local_ctx),
             Expression::LogicalOp {
                 left,
                 right,
                 op,
-                span,
+                span: _,
             } => self.typecheck_logical_op(left, right, op, local_ctx),
-            Expression::UnaryOp { expr, op, span } => self.typecheck_unary_op(expr, op, local_ctx),
-            Expression::Identifier { name, span } => {
+            Expression::UnaryOp { expr, op, span: _ } => {
+                self.typecheck_unary_op(expr, op, local_ctx)
+            }
+            Expression::Identifier { name, span: _ } => {
                 let var = local_ctx
                     .names
                     .get(name)
@@ -545,8 +542,8 @@ impl<'tc> TypeChecker<'tc> {
             Expression::StructInitializer { struct_init } => {
                 self.typecheck_struct_init(struct_init, local_ctx)
             }
-            Expression::SizeOfExpr { expr, span } => {
-                if let Expression::Identifier { name, span } = expr.as_ref() {
+            Expression::SizeOfExpr { expr, span: _ } => {
+                if let Expression::Identifier { name, span: _ } = expr.as_ref() {
                     let ty = self.ctx.get_type(name.clone())?;
                     Ok(TypedExpression {
                         ty: Some(self.ctx.get_type("i64".to_string())?),
@@ -559,7 +556,7 @@ impl<'tc> TypeChecker<'tc> {
             Expression::AsExpr {
                 expr,
                 type_name,
-                span,
+                span: _,
             } => {
                 let expr = self.typecheck_expression(expr, local_ctx)?;
                 let as_ty = self.ctx.get_type(type_name.clone())?;
@@ -913,7 +910,7 @@ impl<'tc> TypeChecker<'tc> {
     ) -> Result<TypedExpression<'tc>, String> {
         debug!("typechecker::typecheck_fn_call");
         let fn_name = match *fn_call.callee.clone() {
-            Expression::Identifier { name, span } => name,
+            Expression::Identifier { name, span: _ } => name,
             _ => return Err("Unsupported callee type".into()),
         };
         let fn_type = local_ctx
@@ -991,7 +988,7 @@ impl<'tc> TypeChecker<'tc> {
         }
         Ok(TypedExpression {
             ty: Some(self.ctx.get_type("bool".into())?),
-            expr: TypedExpressionData::BinaryOp {
+            expr: TypedExpressionData::LogicalOp {
                 left: Box::from(left_type),
                 right: Box::from(right_type),
                 op: *op,
@@ -1035,7 +1032,7 @@ impl<'tc> TypeChecker<'tc> {
         let StructInitializer {
             struct_name,
             fields,
-            span,
+            span: _,
         } = struct_init;
         let struct_type = self.ctx.get_type(struct_name.clone())?;
         let struct_sig = struct_type.sig();
@@ -1053,8 +1050,8 @@ impl<'tc> TypeChecker<'tc> {
             let StructInitializerField {
                 field_name,
                 value,
-                idx,
-                span: field_span,
+                idx: _,
+                span: _,
             } = field;
 
             let expected_field = decl_fields.get(field_name).ok_or(format!(
@@ -1096,14 +1093,14 @@ impl<'tc> TypeChecker<'tc> {
     fn typecheck_member_access(
         &self,
         member_access: &ast::MemberAccess,
-        mut local_ctx: LocalTypecheckContext<'tc>,
+        local_ctx: LocalTypecheckContext<'tc>,
     ) -> Result<TypedExpression<'tc>, String> {
         debug!("typechecker::typecheck_member_access");
         let MemberAccess {
             object,
             member,
             computed,
-            span,
+            span: _,
         } = member_access;
 
         if *computed {

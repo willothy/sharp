@@ -3,10 +3,9 @@ use std::{borrow::BorrowMut, collections::HashMap, error::Error, rc::Rc};
 use inkwell::{
     module::Linkage,
     types::BasicType,
-    values::{BasicMetadataValueEnum, BasicValue, BasicValueEnum, PointerMathValue, PointerValue},
+    values::{BasicMetadataValueEnum, BasicValue, BasicValueEnum, PointerValue},
     AddressSpace,
 };
-use linked_hash_map::LinkedHashMap;
 
 use crate::{
     debug, debugln,
@@ -32,9 +31,7 @@ use crate::{
     },
 };
 
-use super::context::{
-    CodegenContext, CodegenLLVMType, CodegenName, CodegenType, LocalCodegenContext, LoopContext,
-};
+use super::context::{CodegenContext, CodegenName, CodegenType, LocalCodegenContext, LoopContext};
 
 pub struct CodeGenerator<'gen> {
     pub ctx: CodegenContext<'gen>,
@@ -134,9 +131,9 @@ impl<'gen> CodeGenerator<'gen> {
         debug!("generator::CodeGenerator::codegen_struct");
         let TypedStructDeclaration {
             name,
-            fields,
+            fields: _,
             ty,
-            id,
+            id: _,
         } = structure;
         let struct_t = self.ctx.to_llvm_ty(&ty.sig(), &local_ctx.structs)?;
         /* let structure = self.ctx.llvm_ctx.opaque_struct_type(name);
@@ -373,12 +370,8 @@ impl<'gen> CodeGenerator<'gen> {
         let Some(base_type) = local_ctx.get_base_type(&type_sig) else {
             return Err(format!("Base Type not found: {:?} {}:{}", var_stmt.ty, file!(), line!()).into());
         };
-        let base_type_name = base_type.name.clone();
 
-        /* let Some(base_llvm_type) = self.ctx.llvm_ctx.get_struct_type(&base_type_name) else {
-            return Err(format!("Struct Type not found: {:?} {}:{}", &base_type_name, file!(), line!()).into());
-        }; */
-        let base_llvm_type = self.ctx.to_llvm_ty(&type_sig, &local_ctx.structs)?;
+        let _base_llvm_type = self.ctx.to_llvm_ty(&type_sig, &local_ctx.structs)?;
 
         let ptr_depth = local_ctx.get_ptr_depth(&type_sig);
 
@@ -409,17 +402,6 @@ impl<'gen> CodeGenerator<'gen> {
             let Some(init_val) = init_val else {
                 return Err("Expected initializer".into());
             };
-
-            let Some(init_ty) = &init.ty else {
-                return Err("Expected type".into());
-            };
-            let init_ty = init_ty.sig();
-            let init_ty = self
-                .ctx
-                .to_llvm_ty(&init_ty.wrap_in_ptr(), &local_ctx.structs)?;
-
-            /* let store_ptr =
-            self.build_ptr_cast(store_ptr, init_ty.pointer_type()?.as_basic_type_enum())?; */
 
             self.ctx
                 .ir_builder
@@ -1082,7 +1064,7 @@ impl<'gen> CodeGenerator<'gen> {
                             let Some(member_reg) = s.fields.get(&name) else {
                                 return Err("Member does not exist".into());
                             };
-                            let member_ty = member_reg.ty.sig().wrap_in_ptr();
+                            let _member_ty = member_reg.ty.sig().wrap_in_ptr();
                             let member_idx = member_reg.idx;
                             let Some(member) = self.ctx.ir_builder.build_struct_gep(
                                 object.into_pointer_value(),

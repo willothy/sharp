@@ -1,6 +1,6 @@
-use crate::tokenizer::{AssignmentOperator, Literal, Span, TokenPosition};
+use crate::tokenizer::{AssignmentOperator, Literal, TokenPosition};
 
-use super::tokenizer::{Keyword, Operator, Symbol, TokenKind};
+use super::tokenizer::Operator;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct NodeSpan {
@@ -21,6 +21,8 @@ pub enum Declaration {
     FunctionDef(FunctionDefinition),
     FunctionDecl(FunctionDeclaration),
     Struct(StructDeclaration),
+    #[allow(unused)]
+    // TODO: Implement modules
     Module(Module),
 }
 

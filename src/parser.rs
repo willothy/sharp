@@ -7,7 +7,7 @@ use crate::{
     },
     debug,
     tokenizer::{
-        AssignmentOperator, Keyword, Operator, OperatorType, Span, Symbol, Token, TokenKind,
+        AssignmentOperator, Keyword, Operator, OperatorType, Symbol, Token, TokenKind,
         TokenPosition,
     },
 };
@@ -41,10 +41,6 @@ impl<'parser> Parser<'parser> {
         }
     }
 
-    pub fn check_n(&self, n: usize, token: &Token) -> bool {
-        self.tokens.get(self.current + n) == Some(token)
-    }
-
     pub fn current(&self) -> Option<TokenKind> {
         match self.tokens.get(self.current) {
             Some(token) => Some(token.kind.clone()),
@@ -61,15 +57,6 @@ impl<'parser> Parser<'parser> {
             }),
             None => None,
         }
-    }
-
-    pub fn span(&self) -> Result<Span, String> {
-        let Some(span) = self.tokens.get(self.current).map(|token| token.position) else {
-            return Err(format!(
-                "Expected span",
-            ));
-        };
-        Ok(span)
     }
 
     pub fn span_start(&self) -> Result<NodeSpan, String> {
@@ -355,7 +342,7 @@ impl<'parser> Parser<'parser> {
         ),
     ) -> Result<crate::ast::FunctionDefinition, String> {
         debug!("parser::Parser::function_def");
-        let (name, params, return_type, variadic, span) = fn_sig;
+        let (name, params, return_type, variadic, _) = fn_sig;
         let span = self.span_start()?;
         let body = self.block()?;
 
@@ -508,9 +495,13 @@ impl<'parser> Parser<'parser> {
     fn validate_assign_target(&self, target: Expression) -> Result<Expression, String> {
         debug!("parser::Parser::validate_assign_target");
         match &target {
-            Expression::Identifier { name, span } => Ok(target),
-            Expression::MemberAccess { member_access } => Ok(target),
-            Expression::UnaryOp { expr, op, span } => {
+            Expression::Identifier { name: _, span: _ } => Ok(target),
+            Expression::MemberAccess { member_access: _ } => Ok(target),
+            Expression::UnaryOp {
+                expr: _,
+                op,
+                span: _,
+            } => {
                 if let Operator::Times = op {
                     Ok(target)
                 } else {
@@ -1013,7 +1004,7 @@ impl<'parser> Parser<'parser> {
         match self.current() {
             Some(TokenKind::Literal(_)) => Ok(self.literal()?),
             Some(TokenKind::Symbol(Symbol::OpenParen)) => Ok(self.paren_expr()?),
-            Some(TokenKind::Identifier(i)) => {
+            Some(TokenKind::Identifier(_)) => {
                 if let Some(TokenKind::Symbol(Symbol::OpenBrace)) = self.lookahead() {
                     Ok(self.struct_init()?)
                 } else {

@@ -59,7 +59,7 @@ impl<'gen> CodeGenerator<'gen> {
                         .build_float_to_signed_int(from, to_int, "float_to_int");
                 Ok(BasicValueEnum::IntValue(cast))
             }
-            BasicTypeEnum::PointerType(to_ptr) => unreachable!("Cannot cast float to pointer"),
+            BasicTypeEnum::PointerType(_) => unreachable!("Cannot cast float to pointer"),
             BasicTypeEnum::StructType(_) => unreachable!("Cannot cast float to struct"),
             BasicTypeEnum::VectorType(_) => unreachable!("Cannot cast float to vector"),
         }
@@ -72,7 +72,7 @@ impl<'gen> CodeGenerator<'gen> {
     ) -> Result<BasicValueEnum<'gen>, Box<dyn Error>> {
         match to {
             BasicTypeEnum::ArrayType(_) => unreachable!("Cannot cast pointer to array"),
-            BasicTypeEnum::FloatType(to_float) => unreachable!("Cannot cast pointer to float"),
+            BasicTypeEnum::FloatType(_) => unreachable!("Cannot cast pointer to float"),
             BasicTypeEnum::IntType(to_int) => {
                 let cast = self
                     .ctx
