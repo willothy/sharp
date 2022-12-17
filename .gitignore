@@ -3,3 +3,4 @@ test.c
 test.ll
 test.s
 test
+out.ll
