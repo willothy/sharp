@@ -1,5 +1,7 @@
 use std::{cell::RefCell, collections::HashMap, hash::Hash, rc::Rc};
 
+use linked_hash_map::LinkedHashMap;
+
 use crate::ast::FunctionDefinition;
 
 use super::{
@@ -50,6 +52,20 @@ impl<'t> PointerType<'t> {
             current = p.target.as_ref();
         }
         depth
+    }
+
+    fn can_cast_to_prim(&self, p2: &PrimitiveType) -> bool {
+        match p2 {
+            PrimitiveType::I8 => true,
+            PrimitiveType::I16 => true,
+            PrimitiveType::I32 => true,
+            PrimitiveType::I64 => true,
+            PrimitiveType::F32 => false,
+            PrimitiveType::F64 => false,
+            PrimitiveType::Bool => false,
+            PrimitiveType::Char => false,
+            PrimitiveType::Str => false,
+        }
     }
 }
 
@@ -115,33 +131,39 @@ impl<'t> TypeSignature<'t> {
         }
     }
 
-    pub fn string_repr(&self) -> String {
-        let mut repr = String::new();
-        let mut current = self;
-        while let TypeSignature::Pointer(p) = current {
-            repr += format!("*{}", p.target.string_repr()).as_str();
-            current = &p.target;
-        }
-        match current {
-            TypeSignature::Primitive(p) => {
-                repr += match p {
-                    PrimitiveType::I8 => "i8",
-                    PrimitiveType::I16 => "i16",
-                    PrimitiveType::I32 => "i32",
-                    PrimitiveType::I64 => "i64",
-                    PrimitiveType::F32 => "f32",
-                    PrimitiveType::F64 => "f64",
-                    PrimitiveType::Bool => "bool",
-                    PrimitiveType::Char => "char",
-                    PrimitiveType::Str => "str",
-                }
+    pub fn string_repr(&self, structs: &HashMap<TypeId, StructType<'t>>) -> String {
+        match self {
+            TypeSignature::Primitive(p) => match p {
+                PrimitiveType::I8 => "i8",
+                PrimitiveType::I16 => "i16",
+                PrimitiveType::I32 => "i32",
+                PrimitiveType::I64 => "i64",
+                PrimitiveType::F32 => "f32",
+                PrimitiveType::F64 => "f64",
+                PrimitiveType::Bool => "bool",
+                PrimitiveType::Char => "char",
+                PrimitiveType::Str => "str",
             }
-            TypeSignature::Struct(id) => repr += format!("struct {}", id).as_str(),
-            TypeSignature::Function(f) => repr += "fn",
-            TypeSignature::Void => repr += "void",
-            _ => panic!(),
+            .into(),
+            TypeSignature::Struct(id) => {
+                format!("{}", structs.get(id).unwrap().name)
+            }
+            TypeSignature::Function(f) => "fn".into(),
+            TypeSignature::Void => "void".into(),
+            TypeSignature::Pointer(p) => {
+                format!("*{}", p.target.string_repr(structs))
+            }
         }
-        repr
+    }
+
+    pub fn can_cast_to(&self, other: &Self) -> bool {
+        match (self, other) {
+            (TypeSignature::Primitive(p1), TypeSignature::Primitive(p2)) => p1.can_cast_to_prim(p2),
+            (TypeSignature::Pointer(p1), TypeSignature::Pointer(p2)) => true,
+            (TypeSignature::Pointer(p1), TypeSignature::Primitive(p2)) => p1.can_cast_to_prim(p2),
+            (TypeSignature::Primitive(p1), TypeSignature::Pointer(p2)) => p1.can_cast_to_ptr(),
+            _ => false,
+        }
     }
 }
 
@@ -211,6 +233,52 @@ pub enum PrimitiveType {
     Str,
 }
 
+impl PrimitiveType {
+    pub fn can_cast_to_prim(&self, other: &Self) -> bool {
+        match (self, other) {
+            (PrimitiveType::I8, PrimitiveType::I8) => true,
+            (PrimitiveType::I8, PrimitiveType::I16) => true,
+            (PrimitiveType::I8, PrimitiveType::I32) => true,
+            (PrimitiveType::I8, PrimitiveType::I64) => true,
+            (PrimitiveType::I8, PrimitiveType::F32) => true,
+            (PrimitiveType::I8, PrimitiveType::F64) => true,
+            (PrimitiveType::I16, PrimitiveType::I16) => true,
+            (PrimitiveType::I16, PrimitiveType::I32) => true,
+            (PrimitiveType::I16, PrimitiveType::I64) => true,
+            (PrimitiveType::I16, PrimitiveType::F32) => true,
+            (PrimitiveType::I16, PrimitiveType::F64) => true,
+            (PrimitiveType::I32, PrimitiveType::I32) => true,
+            (PrimitiveType::I32, PrimitiveType::I64) => true,
+            (PrimitiveType::I32, PrimitiveType::F32) => true,
+            (PrimitiveType::I32, PrimitiveType::F64) => true,
+            (PrimitiveType::I64, PrimitiveType::I64) => true,
+            (PrimitiveType::I64, PrimitiveType::F32) => true,
+            (PrimitiveType::I64, PrimitiveType::F64) => true,
+            (PrimitiveType::F32, PrimitiveType::F32) => true,
+            (PrimitiveType::F32, PrimitiveType::F64) => true,
+            (PrimitiveType::F64, PrimitiveType::F64) => true,
+            (PrimitiveType::Bool, PrimitiveType::Bool) => true,
+            (PrimitiveType::Char, PrimitiveType::Char) => true,
+            (PrimitiveType::Str, PrimitiveType::Str) => true,
+            _ => false,
+        }
+    }
+
+    pub fn can_cast_to_ptr(&self) -> bool {
+        match self {
+            PrimitiveType::I8 => true,
+            PrimitiveType::I16 => true,
+            PrimitiveType::I32 => true,
+            PrimitiveType::I64 => true,
+            PrimitiveType::F32 => false,
+            PrimitiveType::F64 => false,
+            PrimitiveType::Bool => false,
+            PrimitiveType::Char => false,
+            PrimitiveType::Str => false,
+        }
+    }
+}
+
 impl TryFrom<String> for PrimitiveType {
     type Error = String;
 
@@ -237,7 +305,12 @@ pub struct StructType<'struct_type> {
 }
 impl<'struct_type> StructType<'struct_type> {
     pub(crate) fn get_member_idx(&self, name: &String) -> Option<u32> {
-        self.fields.get(name).map(|f| f.idx)
+        for field in &self.fields {
+            if field.1.name == *name {
+                return Some(field.1.idx);
+            }
+        }
+        None
     }
 }
 

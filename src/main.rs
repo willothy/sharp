@@ -36,6 +36,12 @@ macro_rules! debugln {
     };
 }
 
+// TODO: Pointer and primitive casting (As expression)
+// TODO: Struct member functions
+// TODO: Modules and imports
+// TODO: Arrays
+// TODO: Traits
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = cli::run()?;
 
@@ -64,7 +70,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let mut tc = typechecker::TypeChecker::new();
-    let checked = tc.typecheck_module(&module)?;
+    let checked = tc.typecheck_module(module)?;
+
+    if args.typed_ast_print {
+        println!("{:#?}", checked.module);
+    }
 
     let llvm_ctx = inkwell::context::Context::create();
     let generator = CodeGenerator::new(&checked, &llvm_ctx);

@@ -8,6 +8,7 @@ use inkwell::{
     values::{BasicValueEnum, FunctionValue, PointerValue},
     AddressSpace,
 };
+use linked_hash_map::LinkedHashMap;
 
 use crate::{
     debug, debugln,
@@ -168,7 +169,10 @@ impl<'ctx> CodegenContext<'ctx> {
         &self,
         prim: &PrimitiveType,
     ) -> Result<BasicTypeEnum<'ctx>, String> {
-        debug!(format!("primitive_to_llvm_ty: {:?}", prim));
+        debug!(format!(
+            "codegen::context::primitive_to_llvm_ty: {:?}",
+            prim
+        ));
         match prim {
             PrimitiveType::I32 => Ok(self.llvm_ctx.i32_type().into()),
             PrimitiveType::I64 => Ok(self.llvm_ctx.i64_type().into()),
@@ -195,14 +199,17 @@ impl<'ctx> CodegenContext<'ctx> {
         structs: &HashMap<TypeId, StructType<'ctx>>,
     ) -> Result<CodegenLLVMType<'ctx>, String> {
         debug!("function_to_llvm_ty");
-        let mut param_types: Vec<BasicMetadataTypeEnum> = Vec::new();
+        let mut param_types: Vec<(u32, BasicMetadataTypeEnum)> = Vec::new();
         for param in f.params.values() {
             let param_type = self
                 .to_llvm_ty(&param.ty.borrow_mut().sig.clone(), structs)?
                 .basic()?
                 .into();
-            param_types.push(param_type);
+            param_types.push((param.idx, param_type));
         }
+        param_types.sort_by(|a, b| a.0.cmp(&b.0));
+        let param_types: Vec<BasicMetadataTypeEnum> =
+            param_types.drain(..).map(|(_, t)| t).collect();
 
         let return_type = if let Some(ret) = &f.return_type {
             let t = ret.borrow_mut().sig.clone();
@@ -254,7 +261,7 @@ impl<'ctx> CodegenContext<'ctx> {
             self.llvm_ctx.opaque_struct_type(s.name.as_str())
         };
 
-        let mut field_types: Vec<BasicTypeEnum<'ctx>> = Vec::new();
+        let mut field_types: Vec<(BasicTypeEnum<'ctx>, u32)> = Vec::new();
         for field in s.fields.values() {
             let field_type = match field.ty.sig() {
                 TypeSignature::Primitive(p) => match p {
@@ -321,8 +328,11 @@ impl<'ctx> CodegenContext<'ctx> {
                 TypeSignature::Void => unreachable!("Cannot be void"),
             };
             // self.to_llvm_ty(&field.ty.sig(), structs)?.basic()?
-            field_types.push(field_type);
+            field_types.push((field_type, field.idx));
         }
+
+        field_types.sort_by(|a, b| a.1.cmp(&b.1));
+        let field_types = field_types.drain(..).map(|(t, _)| t).collect::<Vec<_>>();
 
         opaque_struct_t.set_body(field_types.as_slice(), false);
 
@@ -337,7 +347,7 @@ impl<'ctx> CodegenContext<'ctx> {
         ty: &TypeSignature<'ctx>,
         structs: &HashMap<TypeId, StructType<'ctx>>,
     ) -> Result<CodegenLLVMType<'ctx>, String> {
-        debug!(format!("to_llvm_ty: {:?}", ty));
+        debug!(format!("codegen::context::to_llvm_ty: {:?}", ty));
         use TypeSignature::*;
         match ty {
             Primitive(primitive) => {
@@ -363,7 +373,7 @@ impl<'ctx> CodegenContext<'ctx> {
         ptr_type: &type_sig::PointerType<'ctx>,
         structs: &HashMap<TypeId, StructType<'ctx>>,
     ) -> Result<CodegenLLVMType<'ctx>, String> {
-        debug!(format!("ptr_to_llvm_ty: {:?}", ptr_type));
+        debug!(format!("codegen::context::ptr_to_llvm_ty: {:?}", ptr_type));
         match ptr_type.target.as_ref() {
             TypeSignature::Primitive(prim) => match prim {
                 PrimitiveType::I8 => Ok(self
@@ -405,9 +415,7 @@ impl<'ctx> CodegenContext<'ctx> {
                 _ => Err("Unsupported primitive type".into()),
             },
             TypeSignature::Struct(id) => {
-                //println!("structs: {:?}", structs);
                 let Some(struct_ptr) = structs.get(id) else {
-                    panic!();
                     return Err(format!("ptr_to_llvm_ty: Struct not found: {:?}", id))
                 };
                 debugln!();

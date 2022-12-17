@@ -10,6 +10,7 @@ description = "A compiler for the Sharp programming language"
 [dependencies]
 clap = { version = "4.0.29", features = ["derive"] }
 inkwell = { git = "https://github.com/TheDan64/inkwell", branch = "master", features = ["llvm14-0"] }
+linked-hash-map = "0.5.6"
 nom = "7.1.1"
 nom_locate = "4.0.0"
 snailquote = "0.3.1"

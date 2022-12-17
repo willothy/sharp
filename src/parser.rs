@@ -467,7 +467,7 @@ impl<'parser> Parser<'parser> {
             return Ok(Expression::VarAssignment {
                 var_assign: VarAssignment {
                     operator: assign_op,
-                    left: Box::from(left),
+                    left: Box::from(self.validate_assign_target(left)?),
                     right: Box::from(right),
                     span: self.span_start()?,
                 },
@@ -646,7 +646,6 @@ impl<'parser> Parser<'parser> {
     pub fn expression(&mut self) -> Result<Expression, String> {
         debug!("parser::Parser::expression");
         let curr = self.current();
-        //println!("expression: {:?}", curr);
         // Check for If, Block, and Fn Calls
         debug!(format!("{:?}", curr));
         if let Some(TokenKind::Keyword(Keyword::If)) = curr {
@@ -751,7 +750,6 @@ impl<'parser> Parser<'parser> {
                 self.debug_position()
             )),
         }?;
-        //println!("statement: {:?}", statement);
         self.expect(&TokenKind::Symbol(Symbol::Semicolon), file!(), line!())?;
         self.advance();
         Ok(statement)
@@ -819,16 +817,6 @@ impl<'parser> Parser<'parser> {
         self.logical_expr_helper(Self::equality, OperatorType::LogicalAnd)
     }
 
-    pub fn additive(&mut self) -> Result<Expression, String> {
-        debug!("parser::Parser::additive");
-        self.binary_expr_helper(Self::multiplicative, OperatorType::Additive)
-    }
-
-    pub fn multiplicative(&mut self) -> Result<Expression, String> {
-        debug!("parser::Parser::multiplicative");
-        self.binary_expr_helper(Self::unary, OperatorType::Multiplicative)
-    }
-
     pub fn equality(&mut self) -> Result<Expression, String> {
         debug!("parser::Parser::equality");
         self.binary_expr_helper(Self::relational, OperatorType::Equality)
@@ -837,6 +825,33 @@ impl<'parser> Parser<'parser> {
     pub fn relational(&mut self) -> Result<Expression, String> {
         debug!("parser::Parser::relational");
         self.binary_expr_helper(Self::additive, OperatorType::Relational)
+    }
+
+    pub fn additive(&mut self) -> Result<Expression, String> {
+        debug!("parser::Parser::additive");
+        self.binary_expr_helper(Self::multiplicative, OperatorType::Additive)
+    }
+
+    pub fn multiplicative(&mut self) -> Result<Expression, String> {
+        debug!("parser::Parser::multiplicative");
+        self.binary_expr_helper(Self::as_expr, OperatorType::Multiplicative)
+    }
+
+    pub fn as_expr(&mut self) -> Result<Expression, String> {
+        debug!("parser::Parser::as_expr");
+        let mut expr = self.unary()?;
+
+        if let Some(TokenKind::Operator(Operator::As)) = self.current() {
+            let span = self.span_start()?;
+            self.advance();
+            let type_name = self.type_name()?;
+            expr = Expression::AsExpr {
+                expr: Box::from(expr),
+                type_name,
+                span: self.span_end(span)?,
+            };
+        }
+        Ok(expr)
     }
 
     pub fn unary(&mut self) -> Result<Expression, String> {

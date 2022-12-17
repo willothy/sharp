@@ -1,8 +1,8 @@
 
 
 fn printf(str format, ...) -> i32;
-fn malloc(i64 size) -> node*;
-fn free(node* ptr);
+fn malloc(i64 size) -> i8*;
+fn free(i8* ptr);
 
 struct node {
     i32 value,
@@ -10,7 +10,7 @@ struct node {
 }
 
 fn new_node(i32 value) -> node* {
-    let node* ptr = malloc(sizeof(node));
+    let node* ptr = malloc(sizeof(node)) as node*;
     *ptr.value = value;
     return ptr;
 }
@@ -27,25 +27,21 @@ fn node_test() {
     let i32 a = 2;
     let i32 b = 3;
 
-    head = push_front(head, a);
-    head = push_front(head, b);
+    head = push_front(head, 2);
+    head = push_front(head, 3);
 
     printf("head: %d\n", *head.value);
     printf("head.next: %d\n", *(*head.next).value);
     printf("head.next.next: %d\n", *(*(*head.next).next).value);
+
+    free((*(*head).next).next as i8*);
+    free((*head).next as i8*);
+    free(head as i8*);
     return;
 }
 
 fn main() -> i32 {
-    let i32 i = 0;
-    loop {
-        if i == 10 {
-            break;
-        } else {
-            i = i + 1;
-        };
-    };
-    printf("i: %d\n", i);
+    node_test();
     
     return 0;
 }

@@ -137,6 +137,11 @@ pub enum Expression {
         expr: Box<Expression>,
         span: NodeSpan,
     },
+    AsExpr {
+        expr: Box<Expression>,
+        type_name: String,
+        span: NodeSpan,
+    },
 }
 
 #[derive(Debug, PartialEq, Clone)]

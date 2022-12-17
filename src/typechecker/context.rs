@@ -1,5 +1,7 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
+use linked_hash_map::LinkedHashMap;
+
 use crate::ast;
 
 use super::type_sig::{Name, PointerType, PrimitiveType, StructType, Type, TypeSignature};

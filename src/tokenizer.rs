@@ -4,7 +4,10 @@ use std::fmt::{Display, Formatter};
 
 use nom::{
     branch::alt,
-    bytes::{complete::tag, streaming::is_not},
+    bytes::{
+        complete::{tag, take_until},
+        streaming::is_not,
+    },
     character::{
         self,
         complete::{alpha1, alphanumeric1, multispace0},
@@ -80,6 +83,7 @@ pub enum TokenKind {
     Operator(Operator),
     Keyword(Keyword),
     Symbol(Symbol),
+    Comment,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -119,13 +123,14 @@ pub enum Keyword {
     Module,
     Impl,
     Self_,
-    As,
+    //As,
     SizeOf,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Operator {
     Assign(AssignmentOperator),
+    As,
     Plus,
     Minus,
     Times,
@@ -174,6 +179,7 @@ impl Operator {
             Operator::BitwiseNot => OperatorType::Bitwise,
             Operator::BitwiseLeftShift => OperatorType::Bitwise,
             Operator::BitwiseRightShift => OperatorType::Bitwise,
+            Operator::As => OperatorType::Cast,
         }
     }
 
@@ -200,6 +206,7 @@ pub enum OperatorType {
     Equality,
     Relational,
     Bitwise,
+    Cast,
 }
 
 impl Display for AssignmentOperator {
@@ -242,6 +249,7 @@ impl std::fmt::Display for Operator {
             Operator::BitwiseNot => write!(f, "~"),
             Operator::BitwiseLeftShift => write!(f, "<<"),
             Operator::BitwiseRightShift => write!(f, ">>"),
+            Operator::As => write!(f, "as"),
         }
     }
 }
@@ -287,7 +295,7 @@ fn keyword<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
         tag("fn"),
         tag("use"),
         tag("mod"),
-        tag("as"),
+        //tag("as"),
         tag("self"),
         tag("impl"),
         tag("sizeof"),
@@ -308,7 +316,7 @@ fn keyword<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
                 "fn" => TokenKind::Keyword(Keyword::Function),
                 "use" => TokenKind::Keyword(Keyword::Use),
                 "mod" => TokenKind::Keyword(Keyword::Module),
-                "as" => TokenKind::Keyword(Keyword::As),
+                //"as" => TokenKind::Keyword(Keyword::As),
                 "self" => TokenKind::Keyword(Keyword::Self_),
                 "impl" => TokenKind::Keyword(Keyword::Impl),
                 "sizeof" => TokenKind::Keyword(Keyword::SizeOf),
@@ -358,6 +366,7 @@ fn ops2<'a>(input: Span<'a>) -> IResult<Span<'a>, Span> {
         tag("<<"),
         tag(">>"),
         tag("%="),
+        tag("as"),
     ))(input)
 }
 
@@ -393,6 +402,7 @@ fn operator<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
                 "*=" => TokenKind::Operator(Operator::Assign(AssignmentOperator::MulAssign)),
                 "/=" => TokenKind::Operator(Operator::Assign(AssignmentOperator::DivAssign)),
                 "%=" => TokenKind::Operator(Operator::Assign(AssignmentOperator::ModAssign)),
+                "as" => TokenKind::Operator(Operator::As),
                 _ => {
                     return Err(Err::Error(nom::error::Error::new(
                         input,
@@ -509,6 +519,12 @@ fn boolean_literal<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
     ))(input)
 }
 
+fn comment<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
+    let (input, _) = tag("//")(input)?;
+    let (input, _) = take_until("\n")(input)?;
+    Ok((input, TokenKind::Comment))
+}
+
 fn identifier<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
     /* let (input, first_char) = character::complete::alpha1(input)?;
     let (input, rest) = character::complete::alphanumeric0(input)?;
@@ -529,6 +545,7 @@ fn token<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
         preceded(
             multispace0,
             alt((
+                comment,
                 keyword,
                 symbol,
                 operator,
@@ -571,6 +588,10 @@ pub fn tokenize<'a>(input: Span<'a>) -> Option<Vec<Token>> /* IResult<Span<'a>, 
                            } */
         });
     }
+    let tokens = tokens
+        .drain(..)
+        .filter(|tok| !matches!(tok.kind, TokenKind::Comment))
+        .collect();
     //Ok((Span::new(""), tokens))
     Some(tokens)
 }

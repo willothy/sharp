@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use linked_hash_map::LinkedHashMap;
+
 use crate::tokenizer::{AssignmentOperator, Literal, Operator};
 
 use super::{
@@ -121,6 +123,30 @@ pub enum TypedExpressionData<'ast> {
     SizeOfExpr {
         ty: TypeRef<'ast>,
     },
+    AsExpr {
+        expr: Box<TypedExpression<'ast>>,
+        ty: TypeRef<'ast>,
+    },
+}
+
+impl<'ast> TypedExpressionData<'ast> {
+    pub fn variant_str(&self) -> String {
+        match self {
+            TypedExpressionData::BinaryOp { .. } => "Binary Op".into(),
+            TypedExpressionData::LogicalOp { .. } => "Logical Op".into(),
+            TypedExpressionData::UnaryOp { .. } => "Unary Op".into(),
+            TypedExpressionData::Identifier { .. } => "Identifier".into(),
+            TypedExpressionData::Literal { .. } => "Literal".into(),
+            TypedExpressionData::If { .. } => "If".into(),
+            TypedExpressionData::Block { .. } => "Block".into(),
+            TypedExpressionData::VarAssignment { .. } => "Assignment".into(),
+            TypedExpressionData::FnCall { .. } => "Fn Call".into(),
+            TypedExpressionData::MemberAccess { .. } => "MemberAccess".into(),
+            TypedExpressionData::StructInitializer { .. } => "Struct Init".into(),
+            TypedExpressionData::SizeOfExpr { .. } => "Size Of".into(),
+            TypedExpressionData::AsExpr { .. } => "As".into(),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]

@@ -2,6 +2,8 @@
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
+use linked_hash_map::LinkedHashMap;
+
 use crate::{
     ast::{
         self, Block, Declaration, Expression, FunctionCall, FunctionDeclaration,
@@ -49,8 +51,8 @@ impl<'tc> TypeChecker<'tc> {
     }
 
     pub fn typecheck_module(
-        &'tc mut self,
-        module: &'tc ast::Module,
+        &mut self,
+        module: ast::Module,
     ) -> Result<TypeCheckModule<'tc>, String> {
         debug!("typechecker::typecheck_module");
         let mut typed_decls = Vec::new();
@@ -64,10 +66,12 @@ impl<'tc> TypeChecker<'tc> {
             }
         }
 
+        let body = module.body;
+
         // Resolve function types
-        for decl in &module.body {
+        for decl in &body {
             if let Declaration::FunctionDef(f) = decl {
-                let fn_type: Type = self.resolve_fn_def_type(&f)?;
+                let fn_type = self.resolve_fn_def_type(&f)?;
                 self.ctx.names.insert(
                     f.name.clone(),
                     Name {
@@ -75,7 +79,7 @@ impl<'tc> TypeChecker<'tc> {
                     },
                 );
             } else if let Declaration::FunctionDecl(f) = decl {
-                let fn_type: Type = self.resolve_fn_decl_type(&f)?;
+                let fn_type = self.resolve_fn_decl_type(&f)?;
                 self.ctx.names.insert(
                     f.name.clone(),
                     Name {
@@ -88,14 +92,12 @@ impl<'tc> TypeChecker<'tc> {
         let local_ctx = LocalTypecheckContext::from(&self.ctx);
 
         // Typecheck functions
-        for decl in &module.body {
+        for decl in &body {
             if let Declaration::FunctionDef(f) = decl {
-                let typed_decl: TypedFunctionDefinition<'tc> =
-                    self.typecheck_fn_def(&f, local_ctx.clone())?;
+                let typed_decl = self.typecheck_fn_def(&f, local_ctx.clone())?;
                 typed_decls.push(TypedDeclaration::FunctionDef(typed_decl));
             } else if let Declaration::FunctionDecl(f) = decl {
-                let typed_decl: TypedFunctionDeclaration<'tc> =
-                    self.typecheck_fn_decl(&f, local_ctx.clone())?;
+                let typed_decl = self.typecheck_fn_decl(&f, local_ctx.clone())?;
 
                 typed_decls.push(TypedDeclaration::FunctionDecl(typed_decl));
             }
@@ -149,8 +151,8 @@ impl<'tc> TypeChecker<'tc> {
     }
 
     fn typecheck_fn_def(
-        &'tc self,
-        function: &'tc FunctionDefinition,
+        &self,
+        function: &FunctionDefinition,
         mut local_ctx: LocalTypecheckContext<'tc>,
     ) -> Result<TypedFunctionDefinition<'tc>, String> {
         debug!("typechecker::typecheck_fn_def");
@@ -187,10 +189,10 @@ impl<'tc> TypeChecker<'tc> {
     }
 
     fn typecheck_block(
-        &'tc self,
+        &self,
         body: &Block,
         mut local_ctx: LocalTypecheckContext<'tc>,
-    ) -> Result<TypedBlock, String> {
+    ) -> Result<TypedBlock<'tc>, String> {
         debug!("typechecker::typecheck_block");
         let mut typed_statements = Vec::new();
         let mut hasResult = false;
@@ -217,10 +219,10 @@ impl<'tc> TypeChecker<'tc> {
     }
 
     pub(crate) fn codegen_variable_stmt(
-        &'tc self,
+        &self,
         var_stmt: &VarDeclaration,
         local_ctx: &mut LocalTypecheckContext<'tc>,
-    ) -> Result<TypedStatement, String> {
+    ) -> Result<TypedStatement<'tc>, String> {
         let VarDeclaration {
             name,
             type_name,
@@ -255,10 +257,10 @@ impl<'tc> TypeChecker<'tc> {
     }
 
     fn typecheck_statement(
-        &'tc self,
+        &self,
         statement: &ast::Statement,
         local_ctx: &mut LocalTypecheckContext<'tc>,
-    ) -> Result<typed_ast::TypedStatement, String> {
+    ) -> Result<typed_ast::TypedStatement<'tc>, String> {
         debug!("typechecker::typecheck_statement");
         use ast::Statement::*;
         match statement {
@@ -324,7 +326,7 @@ impl<'tc> TypeChecker<'tc> {
     }
 
     fn typecheck_expression(
-        &'tc self,
+        &self,
         expr: &Expression,
         local_ctx: LocalTypecheckContext<'tc>,
     ) -> Result<TypedExpression<'tc>, String> {
@@ -554,14 +556,39 @@ impl<'tc> TypeChecker<'tc> {
                     return Err("Invalid argument to sizeof".to_string());
                 }
             }
+            Expression::AsExpr {
+                expr,
+                type_name,
+                span,
+            } => {
+                let expr = self.typecheck_expression(expr, local_ctx)?;
+                let as_ty = self.ctx.get_type(type_name.clone())?;
+                let Some(expr_ty) = expr.ty.clone() else {
+                    return Err(format!("Cannot cast expression of unknown type"));
+                };
+                if expr_ty.sig().can_cast_to(&as_ty.sig()) {
+                    Ok(TypedExpression {
+                        ty: Some(as_ty.clone()),
+                        expr: TypedExpressionData::AsExpr {
+                            expr: Box::from(expr),
+                            ty: as_ty,
+                        },
+                    })
+                } else {
+                    Err(format!(
+                        "Cannot cast expression of type {:?} to type {:?}",
+                        expr_ty, as_ty
+                    ))
+                }
+            }
         }
     }
 
     fn typecheck_literal(
-        &'tc self,
+        &self,
         literal: &Literal,
         local_ctx: &LocalTypecheckContext<'tc>,
-    ) -> Result<TypedLiteral, String> {
+    ) -> Result<TypedLiteral<'tc>, String> {
         debug!(format!("typechecker::typecheck_literal: {:?}", literal));
         match literal {
             Literal::Str(s, pos) => Ok(TypedLiteral {
@@ -742,7 +769,7 @@ impl<'tc> TypeChecker<'tc> {
     }
 
     fn typecheck_binary_op(
-        &'tc self,
+        &self,
         left: &Expression,
         right: &Expression,
         op: &Operator,
@@ -880,10 +907,10 @@ impl<'tc> TypeChecker<'tc> {
     }
 
     fn typecheck_fn_call(
-        &'tc self,
+        &self,
         fn_call: &ast::FunctionCall,
         local_ctx: LocalTypecheckContext<'tc>,
-    ) -> Result<TypedExpression, String> {
+    ) -> Result<TypedExpression<'tc>, String> {
         debug!("typechecker::typecheck_fn_call");
         let fn_name = match *fn_call.callee.clone() {
             Expression::Identifier { name, span } => name,
@@ -947,7 +974,7 @@ impl<'tc> TypeChecker<'tc> {
     }
 
     fn typecheck_logical_op(
-        &'tc self,
+        &self,
         left: &Expression,
         right: &Expression,
         op: &Operator,
@@ -973,11 +1000,11 @@ impl<'tc> TypeChecker<'tc> {
     }
 
     fn typecheck_unary_op(
-        &'tc self,
+        &self,
         expr: &Expression,
         op: &Operator,
         local_ctx: LocalTypecheckContext<'tc>,
-    ) -> Result<TypedExpression, String> {
+    ) -> Result<TypedExpression<'tc>, String> {
         debug!("typechecker::typecheck_unary_op");
         let expr_type = self.typecheck_expression(expr, local_ctx.clone())?;
         let Some(ty) = &expr_type.ty else {
@@ -1000,10 +1027,10 @@ impl<'tc> TypeChecker<'tc> {
     }
 
     fn typecheck_struct_init(
-        &'tc self,
+        &self,
         struct_init: &StructInitializer,
         mut local_ctx: LocalTypecheckContext<'tc>,
-    ) -> Result<TypedExpression, String> {
+    ) -> Result<TypedExpression<'tc>, String> {
         debug!("typechecker::typecheck_struct_init");
         let StructInitializer {
             struct_name,
@@ -1067,7 +1094,7 @@ impl<'tc> TypeChecker<'tc> {
     }
 
     fn typecheck_member_access(
-        &'tc self,
+        &self,
         member_access: &ast::MemberAccess,
         mut local_ctx: LocalTypecheckContext<'tc>,
     ) -> Result<TypedExpression<'tc>, String> {

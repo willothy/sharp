@@ -12,6 +12,8 @@ struct Args {
     ast_print: bool,
     #[arg(short, long)]
     tokens_print: bool,
+    #[arg(short = 'x', long)]
+    typed_ast_print: bool,
     #[arg(short, long)]
     ir_print: bool,
     #[arg(short, long)]
@@ -33,6 +35,7 @@ impl Args {
             debug: self.debug,
             jit_exec: self.jit_exec,
             compile: self.compile,
+            typed_ast_print: self.typed_ast_print,
         })
     }
 }
@@ -47,6 +50,7 @@ pub struct ArgsValidated {
     pub debug: bool,
     pub jit_exec: bool,
     pub compile: bool,
+    pub typed_ast_print: bool,
 }
 
 pub fn run() -> Result<ArgsValidated, Box<dyn std::error::Error>> {
