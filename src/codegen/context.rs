@@ -88,7 +88,6 @@ impl<'ctx> LocalCodegenContext<'ctx> {
         self.types
             .values()
             .find(|t| t.name.as_str() == name)
-            .map(|t| t)
     }
 }
 
