@@ -129,12 +129,7 @@ impl<'gen> CodeGenerator<'gen> {
         local_ctx: &mut LocalCodegenContext<'gen>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         debug!("generator::CodeGenerator::codegen_struct");
-        let TypedStructDeclaration {
-            name,
-            fields: _,
-            ty,
-            id: _,
-        } = structure;
+        let TypedStructDeclaration { name, ty, .. } = structure;
         let struct_t = self.ctx.to_llvm_ty(&ty.sig(), &local_ctx.structs)?;
         /* let structure = self.ctx.llvm_ctx.opaque_struct_type(name);
         let mut fds = Vec::new();
@@ -426,14 +421,8 @@ impl<'gen> CodeGenerator<'gen> {
             local_ctx.current_fn.unwrap().get_name()
         ));
         let res = match init {
-            TypedExpression {
-                ty: _,
-                expr: TypedExpressionData::BinaryOp { left, right, op },
-            } => Some(self.codegen_binary_op(left, right, op, local_ctx)?),
-            TypedExpression {
-                ty: _,
-                expr: TypedExpressionData::AsExpr { expr, ty },
-            } => {
+            TypedExpression { expr: TypedExpressionData::BinaryOp { left, right, op }, .. } => Some(self.codegen_binary_op(left, right, op, local_ctx)?),
+            TypedExpression { expr: TypedExpressionData::AsExpr { expr, ty }, .. } => {
                 let Some(expr) = self.codegen_expression(expr, local_ctx.clone(), did_break)? else {
                     return Err("Expected value from expression".into());
                 };
@@ -451,10 +440,7 @@ impl<'gen> CodeGenerator<'gen> {
                 };
                 Some(res)
             }
-            TypedExpression {
-                ty: _,
-                expr: TypedExpressionData::LogicalOp { left, right, op },
-            } => {
+            TypedExpression { expr: TypedExpressionData::LogicalOp { left, right, op }, .. } => {
                 let Some(left) = self.codegen_expression(left, local_ctx.clone(), did_break)? else {
                     return Err("Expected value from expression".into());
                 };
@@ -470,10 +456,7 @@ impl<'gen> CodeGenerator<'gen> {
 
                 Some(res)
             }
-            TypedExpression {
-                ty: _,
-                expr: TypedExpressionData::UnaryOp { expr, op },
-            } => match op {
+            TypedExpression { expr: TypedExpressionData::UnaryOp { expr, op }, .. } => match op {
                 Operator::Plus => self.codegen_expression(expr, local_ctx.clone(), did_break)?,
                 Operator::Minus => {
                     // Negate
@@ -535,24 +518,10 @@ impl<'gen> CodeGenerator<'gen> {
                 _ => return Err(format!("Invalid unary operator: {:?}", op).into()),
             },
 
-            TypedExpression {
-                ty: _,
-                expr: TypedExpressionData::Identifier { name },
-            } => Some(self.codegen_identifier(name, local_ctx)?),
-            TypedExpression {
-                ty: _,
-                expr: TypedExpressionData::Literal { literal },
-            } => Some(self.codegen_literal(literal, local_ctx)?),
-            TypedExpression {
-                ty: _,
-                expr: TypedExpressionData::If { expr },
-            } => {
-                let TypedIfExpression {
-                    condition,
-                    body,
-                    else_body,
-                    result_ty: _,
-                } = expr;
+            TypedExpression { expr: TypedExpressionData::Identifier { name }, .. } => Some(self.codegen_identifier(name, local_ctx)?),
+            TypedExpression { expr: TypedExpressionData::Literal { literal }, .. } => Some(self.codegen_literal(literal, local_ctx)?),
+            TypedExpression { expr: TypedExpressionData::If { expr }, .. } => {
+                let TypedIfExpression { condition, body, else_body, .. } = expr;
 
                 let Some(condition) = self.codegen_expression(condition, local_ctx.clone(), did_break)? else {
                     return Err("Expected value from expression".into());
@@ -622,10 +591,7 @@ impl<'gen> CodeGenerator<'gen> {
 
                 res
             }
-            TypedExpression {
-                ty: _,
-                expr: TypedExpressionData::Block { block },
-            } => {
+            TypedExpression { expr: TypedExpressionData::Block { block }, .. } => {
                 let mut res = None;
                 let mut block_scope = local_ctx.clone();
                 for statement in &block.statements {
@@ -633,26 +599,11 @@ impl<'gen> CodeGenerator<'gen> {
                 }
                 res
             }
-            TypedExpression {
-                ty: _,
-                expr: TypedExpressionData::VarAssignment { var_assign },
-            } => Some(self.codegen_var_assignment(var_assign, local_ctx)?),
-            TypedExpression {
-                ty: _,
-                expr: TypedExpressionData::FnCall { fn_call },
-            } => self.codegen_fn_call(fn_call, local_ctx)?,
-            TypedExpression {
-                ty: _,
-                expr: TypedExpressionData::MemberAccess { member_access },
-            } => Some(self.codegen_member_access(member_access, local_ctx)?),
-            TypedExpression {
-                ty: _,
-                expr: TypedExpressionData::StructInitializer { struct_init },
-            } => Some(self.codegen_struct_init(struct_init, local_ctx)?),
-            TypedExpression {
-                ty: _,
-                expr: TypedExpressionData::SizeOfExpr { ty },
-            } => {
+            TypedExpression { expr: TypedExpressionData::VarAssignment { var_assign }, .. } => Some(self.codegen_var_assignment(var_assign, local_ctx)?),
+            TypedExpression { expr: TypedExpressionData::FnCall { fn_call }, .. } => self.codegen_fn_call(fn_call, local_ctx)?,
+            TypedExpression { expr: TypedExpressionData::MemberAccess { member_access }, .. } => Some(self.codegen_member_access(member_access, local_ctx)?),
+            TypedExpression { expr: TypedExpressionData::StructInitializer { struct_init }, .. } => Some(self.codegen_struct_init(struct_init, local_ctx)?),
+            TypedExpression { expr: TypedExpressionData::SizeOfExpr { ty }, .. } => {
                 let Some(size) = self.ctx.to_llvm_ty(&ty.sig(), &local_ctx.structs)?.basic()?.size_of() else {
                     return Err("Expected size".into());
                 };
@@ -669,10 +620,7 @@ impl<'gen> CodeGenerator<'gen> {
     ) -> Result<BasicValueEnum<'gen>, Box<dyn Error>> {
         debug!("generator::CodeGenerator::codegen_literal");
         let t = match literal {
-            TypedLiteral {
-                ty: _,
-                literal: Literal::Str(s, _pos),
-            } => {
+            TypedLiteral { literal: Literal::Str(s, _pos), .. } => {
                 let s = self
                     .ctx
                     .ir_builder
@@ -710,10 +658,7 @@ impl<'gen> CodeGenerator<'gen> {
                 };
                 ty.float_type()?.const_float(*f).as_basic_value_enum()
             }
-            TypedLiteral {
-                ty: _,
-                literal: Literal::Char(_c, _pos),
-            } => unimplemented!("codegen char literal"),
+            TypedLiteral { literal: Literal::Char(_c, _pos), .. } => unimplemented!("codegen char literal"),
             TypedLiteral {
                 ty,
                 literal: Literal::Bool(b, pos),
@@ -829,11 +774,7 @@ impl<'gen> CodeGenerator<'gen> {
                 Ok(load)
             }
             TypedExpressionData::MemberAccess { member_access } => {
-                let TypedMemberAccess {
-                    object,
-                    member,
-                    computed: _,
-                } = member_access;
+                let TypedMemberAccess { object, member, .. } = member_access;
                 // TODO: Handle computed member access expressions and array access expressions
                 let Some(member_ty) = &member.ty else {
                     return Err("Member type is None".into());
@@ -895,7 +836,7 @@ impl<'gen> CodeGenerator<'gen> {
 
                 Ok(member_ptr.as_basic_value_enum())
             }
-            TypedExpressionData::UnaryOp { expr, op: _ } => {
+            TypedExpressionData::UnaryOp { expr, .. } => {
                 // left hand side dereference
                 let Some(right) = self.codegen_expression(&var_assign.right, local_ctx.clone(), &mut false)? else {
                     return Err("Right side of assignment is None".into());
@@ -1006,11 +947,7 @@ impl<'gen> CodeGenerator<'gen> {
         local_ctx: LocalCodegenContext<'gen>,
     ) -> Result<BasicValueEnum<'gen>, Box<dyn Error>> {
         debug!("generator::CodeGenerator::codegen_lhs_member_access");
-        let TypedMemberAccess {
-            object,
-            member,
-            computed: _,
-        } = member_access;
+        let TypedMemberAccess { object, member, .. } = member_access;
 
         let Some(object_type) = &object.ty else {
             return Err("Object type is None".into());
@@ -1097,10 +1034,7 @@ impl<'gen> CodeGenerator<'gen> {
         ));
 
         let callee_name = match *fn_call.callee.clone() {
-            TypedExpression {
-                ty: _,
-                expr: TypedExpressionData::Identifier { name },
-            } => name,
+            TypedExpression { expr: TypedExpressionData::Identifier { name }, .. } => name,
             _ => unreachable!(),
         };
 
@@ -1225,11 +1159,7 @@ impl<'gen> CodeGenerator<'gen> {
         local_ctx: LocalCodegenContext<'gen>,
     ) -> Result<BasicValueEnum<'gen>, Box<dyn Error>> {
         debug!("generator::CodeGenerator::codegen_member_access");
-        let TypedMemberAccess {
-            object,
-            member,
-            computed: _,
-        } = member_access;
+        let TypedMemberAccess { object, member, .. } = member_access;
 
         let Some(object_type) = &object.ty else {
             return Err("Object type is None".into());
