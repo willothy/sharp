@@ -2,7 +2,7 @@ use std::{borrow::BorrowMut, collections::HashMap, error::Error, rc::Rc};
 
 use inkwell::{
     module::Linkage,
-    types::BasicType,
+    types::{BasicType, StructType},
     values::{BasicMetadataValueEnum, BasicValue, BasicValueEnum, PointerValue},
     AddressSpace,
 };
@@ -409,13 +409,12 @@ impl<'gen> CodeGenerator<'gen> {
             .ir_builder
             .build_alloca(llvm_ty.basic()?, &var_stmt.name);
         // Add store ptr to local context
-
         if let Some(init) = &var_stmt.initializer {
             let init_val = self.codegen_expression(init, local_ctx.clone(), did_break)?;
             let Some(init_val) = init_val else {
                 return Err("Expected initializer".into());
             };
-
+            debugln!();
             self.ctx
                 .ir_builder
                 .build_store(store_ptr /* .into_pointer_value() */, init_val);
@@ -454,11 +453,23 @@ impl<'gen> CodeGenerator<'gen> {
                     .ctx
                     .to_llvm_ty(&ty.sig(), &local_ctx.structs)?
                     .basic()?;
+                debugln!();
                 let res = match &expr {
                     BasicValueEnum::ArrayValue(_) => todo!(),
-                    BasicValueEnum::IntValue(i) => self.build_int_cast(i.clone(), as_ty)?,
-                    BasicValueEnum::FloatValue(f) => self.build_float_cast(f.clone(), as_ty)?,
-                    BasicValueEnum::PointerValue(p) => self.build_ptr_cast(p.clone(), as_ty)?,
+                    BasicValueEnum::IntValue(i) => {
+                        debugln!();
+                        self.build_int_cast(i.clone(), as_ty)?
+                    }
+                    BasicValueEnum::FloatValue(f) => {
+                        debugln!();
+                        self.build_float_cast(f.clone(), as_ty)?
+                    }
+                    BasicValueEnum::PointerValue(p) => {
+                        debugln!();
+                        println!("p: {:?}", p);
+                        println!("as_ty: {:?}", as_ty);
+                        self.build_ptr_cast(p.clone(), as_ty)?
+                    }
                     BasicValueEnum::StructValue(_) => todo!(),
                     BasicValueEnum::VectorValue(_) => todo!(),
                 };
@@ -897,9 +908,9 @@ impl<'gen> CodeGenerator<'gen> {
                     .pointer_type()?
                     .as_basic_type_enum();
 
+                debugln!();
                 let member_ptr = self.build_ptr_cast(member_ptr, right_ty)?;
 
-                debugln!();
                 let _store = self
                     .ctx
                     .ir_builder
@@ -925,9 +936,9 @@ impl<'gen> CodeGenerator<'gen> {
                     if p.is_const() {
                         self.ctx.ir_builder.build_memcpy(
                             left,
-                            64,
+                            8,
                             right.into_pointer_value(),
-                            64,
+                            8,
                             size,
                         )?;
                         let load = self.ctx.ir_builder.build_load(left, "deref_assign_result");
@@ -943,6 +954,7 @@ impl<'gen> CodeGenerator<'gen> {
                     .ctx
                     .to_llvm_ty(&right_sig.wrap_in_ptr(), &local_ctx.structs)?
                     .pointer_type()?;
+                debugln!();
                 let left = self.build_ptr_cast(left, right_ty.as_basic_type_enum())?;
                 self.ctx
                     .ir_builder
@@ -1263,41 +1275,82 @@ impl<'gen> CodeGenerator<'gen> {
     fn codegen_struct_init(
         &self,
         struct_init: &'gen TypedStructInitializer<'gen>,
-        local_ctx: LocalCodegenContext<'gen>,
+        mut local_ctx: LocalCodegenContext<'gen>,
     ) -> Result<BasicValueEnum<'gen>, Box<dyn Error>> {
         debug!("generator::CodeGenerator::codegen_struct_init");
-        /* let struct_ty = &struct_init.struct_ty;
-        let sig = struct_ty.sig();
-        let Some(struct_ty) = local_ctx.get_base_type(&sig) else {
-            return Err(format!("Type not found {}:{}", file!(), line!()).into());
-        }; */
         let Some(struct_ty) = local_ctx.get_type_by_name(&struct_init.struct_name.clone()) else {
             return Err("Struct type not found".into());
         };
 
         let mut values = Vec::new();
         for field in struct_init.fields.iter() {
+            let idx = field.idx;
             let Some(field) = self.codegen_expression(&field.value, local_ctx.clone(), &mut false)? else {
                 return Err("Field is None".into());
             };
-            values.push(field);
+            values.push((idx, field));
         }
 
         let Some(llvm_ty) = &struct_ty.llvm_ty else {
             return Err("Invalid struct type".into());
         };
 
-        let init = llvm_ty.struct_type()?.const_named_struct(values.as_slice());
-        let global = self.ctx.llvm_module.add_global(
-            llvm_ty.struct_type()?,
-            Some(AddressSpace::Generic),
-            (struct_init.struct_name.clone() + ".init").as_str(),
+        let struct_ty = llvm_ty.struct_type()?;
+        let global = if let Some(global) = self
+            .ctx
+            .llvm_module
+            .get_global((struct_init.struct_name.clone() + ".init").as_str())
+        {
+            global
+        } else {
+            let global = self.ctx.llvm_module.add_global(
+                llvm_ty.struct_type()?,
+                Some(AddressSpace::Global),
+                (struct_init.struct_name.clone() + ".init").as_str(),
+            );
+            global.set_initializer(&struct_ty.const_zero());
+            global.set_constant(true);
+            global
+        };
+
+        let temp_alloc = self.ctx.ir_builder.build_alloca(
+            struct_ty,
+            (struct_init.struct_name.clone() + ".init_temp").as_str(),
         );
-        global.set_initializer(&init);
-        global.set_constant(true);
+
+        self.ctx.ir_builder.build_memcpy(
+            temp_alloc,
+            8,
+            global.as_pointer_value(),
+            8,
+            struct_ty.size_of().ok_or("Invalid size")?,
+        )?;
+
+        self.ctx.llvm_module.print_to_stderr();
+
+        let field_types = struct_ty.get_field_types();
+        for (idx, value) in values.iter() {
+            let Some(gep) = self.ctx.ir_builder.build_struct_gep(
+                temp_alloc,
+                *idx,
+                (struct_init.struct_name.clone() + ".field." + idx.to_string().as_str() + ".init.gep").as_str(),
+            ).ok() else {
+                return Err("Invalid gep".into());
+            };
+            let Some(field_type) = field_types.get(*idx as usize) else {
+                return Err("Invalid field type".into());
+            };
+            let field_type = field_type
+                .ptr_type(AddressSpace::Generic)
+                .as_basic_type_enum();
+            let gep = self.build_ptr_cast(gep, field_type)?.into_pointer_value();
+            debugln!();
+            println!("Storing {} in {}", value, gep);
+            self.ctx.ir_builder.build_store(gep, *value);
+        }
 
         let load = self.ctx.ir_builder.build_load(
-            global.as_pointer_value(),
+            temp_alloc,
             ("load_".to_owned() + &struct_init.struct_name + "_init").as_str(),
         );
 

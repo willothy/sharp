@@ -8,6 +8,18 @@ struct Test {
     i32 b,
 }
 
+struct Test2 {
+    Test a,
+    i32 b,
+}
+
+impl Test2 {
+    fn set_a(self, i32 a) {
+        *self.a.a = a;
+        return;
+    }
+}
+
 impl Test {
     fn new() -> Test {
         return Test {
@@ -23,13 +35,15 @@ impl Test {
 }
 
 fn main() -> i32 {
-    let Test* t = malloc(sizeof(Test)) as Test*;
-    *t = Test {
-        a: 0,
-        b: 5,
+    let Test2 t = Test2 {
+        a: Test {
+            a: 5,
+            b: 0,
+        },
+        b: 0,
     };
-    t.set_a(5);
-    printf("test.a: %d\n", *t.a);
-    free(t as i8*);
+    printf("t.a.a: %d\n", t.a.a);
+    t.set_a(10);
+    printf("t.a.a: %d\n", t.a.a);
     return 0;
 }
