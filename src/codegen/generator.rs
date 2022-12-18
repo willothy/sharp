@@ -2,7 +2,7 @@ use std::{borrow::BorrowMut, collections::HashMap, error::Error, rc::Rc};
 
 use inkwell::{
     module::Linkage,
-    types::{BasicType, StructType},
+    types::BasicType,
     values::{BasicMetadataValueEnum, BasicValue, BasicValueEnum, PointerValue},
     AddressSpace,
 };
@@ -230,6 +230,12 @@ impl<'gen> CodeGenerator<'gen> {
             };
             let param_name =
                 CodegenName::new_arg(param.name.clone(), param_type.clone(), param.idx as u32);
+            llvm_fn
+                .get_params()
+                .iter_mut()
+                .nth(param.idx as usize)
+                .ok_or(format!("Param not found: {}", param.name))?
+                .set_name(&param_name.name);
             local_ctx.add_name(param_name);
         }
 
@@ -1134,12 +1140,7 @@ impl<'gen> CodeGenerator<'gen> {
             TypedExpression {
                 expr:
                     TypedExpressionData::MemberAccess {
-                        member_access:
-                            TypedMemberAccess {
-                                object,
-                                member,
-                                computed,
-                            },
+                        member_access: TypedMemberAccess { object, member, .. },
                     },
                 ..
             } => {
@@ -1275,7 +1276,7 @@ impl<'gen> CodeGenerator<'gen> {
     fn codegen_struct_init(
         &self,
         struct_init: &'gen TypedStructInitializer<'gen>,
-        mut local_ctx: LocalCodegenContext<'gen>,
+        local_ctx: LocalCodegenContext<'gen>,
     ) -> Result<BasicValueEnum<'gen>, Box<dyn Error>> {
         debug!("generator::CodeGenerator::codegen_struct_init");
         let Some(struct_ty) = local_ctx.get_type_by_name(&struct_init.struct_name.clone()) else {

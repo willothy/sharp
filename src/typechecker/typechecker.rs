@@ -197,7 +197,7 @@ impl<'tc> TypeChecker<'tc> {
         for statement in &body.statements {
             let typed_statement = self.typecheck_statement(statement, &mut local_ctx)?;
             // check if resulted
-            if let TypedStatement::Result(_) = typed_statement {
+            if matches!(typed_statement, TypedStatement::Result(_)) {
                 has_result = true;
             }
             typed_statements.push(typed_statement);
@@ -356,7 +356,10 @@ impl<'tc> TypeChecker<'tc> {
             }
             Expression::If { expr } => {
                 let bool_type = self.ctx.get_type("bool".to_string())?;
-                let cond = self.typecheck_expression(&expr.condition, local_ctx.clone())?;
+                let cond = self.typecheck_expression(
+                    &expr.condition,
+                    local_ctx.expect_result(Some(self.ctx.get_type("bool".into())?)),
+                )?;
                 if cond.ty != Some(bool_type) {
                     return Err(format!(
                         "Invalid condition type: Expected type bool, found {:?} in if condition",
@@ -617,11 +620,15 @@ impl<'tc> TypeChecker<'tc> {
                     }
                 }
                 None => {
-                    return Err(format!(
+                    Ok(TypedLiteral {
+                        ty: self.ctx.get_type("i32".into())?,
+                        literal: Literal::Int(*i, pos.clone()),
+                    })
+                    /* return Err(format!(
                         "Cannot infer type of int literal {} at {}",
                         i,
                         literal.position()
-                    ))
+                    )) */
                 }
             },
             Literal::Float(f, pos) => match &local_ctx.result_type {
@@ -742,10 +749,11 @@ impl<'tc> TypeChecker<'tc> {
         local_ctx: LocalTypecheckContext<'tc>,
     ) -> Result<TypedExpression<'tc>, String> {
         debug!("typechecker::typecheck_binary_op");
-        let left_type = self.typecheck_expression(left, local_ctx.clone())?;
+
+        use Operator::*;
+        let left_type = self.typecheck_expression(left, local_ctx.expect_result(None))?;
         let right_type =
             self.typecheck_expression(right, local_ctx.expect_result(left_type.ty.clone()))?;
-        use Operator::*;
         let (Some(left_ty), Some(right_ty)) = (&left_type.ty, &right_type.ty) else {
             return Err("Cannot perform binary operation on non-existant types".into());
         };
@@ -1038,7 +1046,7 @@ impl<'tc> TypeChecker<'tc> {
             return Err(format!("Cannot dereference {:?}", expr_type));
         };
         let mut ty = ty.sig();
-        if let Operator::Times = op {
+        if matches!(op, Operator::Times) {
             ty = ty.get_ptr_inner_ty();
         }
 

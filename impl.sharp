@@ -36,14 +36,22 @@ impl Test {
 
 fn main() -> i32 {
     let Test2 t = Test2 {
-        a: Test {
-            a: 5,
-            b: 0,
+        a: if 1 == 1 {
+            <- Test {
+                a: 5,
+                b: 0,
+            };
+        } else {
+            <- Test {
+                a: 0,
+                b: 0,
+            };
         },
         b: 0,
     };
     printf("t.a.a: %d\n", t.a.a);
     t.set_a(10);
+    
     printf("t.a.a: %d\n", t.a.a);
     return 0;
 }
