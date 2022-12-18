@@ -83,6 +83,13 @@ impl<'t> TypeSignature<'t> {
         })
     }
 
+    pub fn is_struct_type(&self) -> bool {
+        match self {
+            TypeSignature::Struct(_) => true,
+            _ => false,
+        }
+    }
+
     pub fn get_base_type(&self) -> TypeSignature<'t> {
         match self {
             TypeSignature::Pointer(p) => p.target.get_base_type(),

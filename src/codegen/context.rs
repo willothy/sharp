@@ -34,7 +34,8 @@ pub struct LocalCodegenContext<'ctx> {
     pub result_type: Option<TypeSignature<'ctx>>,
     pub current_fn: Option<FunctionValue<'ctx>>,
     pub loop_ctx: Option<LoopContext<'ctx>>,
-    pub self_type: Option<TypeSignature<'ctx>>,
+    pub impl_ctx: Option<ImplCtx<'ctx>>,
+    pub is_self_arg: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -43,13 +44,27 @@ pub struct LoopContext<'ctx> {
     pub exit_block: BasicBlock<'ctx>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ImplCtx<'ctx> {
+    pub self_type: TypeSignature<'ctx>,
+    pub self_name: String,
+}
+
 impl<'ctx> LocalCodegenContext<'ctx> {
-    pub fn with_self(&self, self_type: Option<TypeSignature<'ctx>>) -> Self {
+    pub fn with_self(&self, impl_ctx: Option<ImplCtx<'ctx>>) -> Self {
         Self {
-            self_type,
+            impl_ctx,
             ..self.clone()
         }
     }
+
+    pub fn self_arg(&self, has: bool) -> Self {
+        Self {
+            is_self_arg: has,
+            ..self.clone()
+        }
+    }
+
     pub fn add_name(&mut self, name: CodegenName<'ctx>) {
         self.names.insert(name.name.clone(), name);
     }

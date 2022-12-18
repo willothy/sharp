@@ -8,6 +8,7 @@ use inkwell::{
 };
 
 use crate::{
+    codegen::context::ImplCtx,
     debug, debugln,
     tokenizer::Literal,
     typechecker::{
@@ -61,7 +62,8 @@ impl<'gen> CodeGenerator<'gen> {
             current_fn: None,
             structs: HashMap::new(),
             loop_ctx: None,
-            self_type: None,
+            impl_ctx: None,
+            is_self_arg: false,
         };
 
         self.ctx.add_primitive_types(&mut local_ctx);
@@ -144,13 +146,14 @@ impl<'gen> CodeGenerator<'gen> {
         let Some(struct_t) = local_ctx.types.get(&ty.sig()) else {
             return Err(format!("Type not found: {:?} {}:{}", ty.sig(), file!(), line!()).into());
         };
+        let struct_name = struct_t.name.clone();
 
         for (name, method) in &structure.methods {
             let TypeSignature::Function(func_ty) = method.fn_ty.sig() else {
                 return Err(format!("Type not found: {:?} {}:{}", method.fn_ty.sig(), file!(), line!()).into());
             };
             local_ctx.add_name(CodegenName::new(
-                name.clone(),
+                struct_name.clone() + "." + &name,
                 Rc::new(CodegenType {
                     name: name.clone(),
                     ty: method.fn_ty.sig(),
@@ -159,8 +162,14 @@ impl<'gen> CodeGenerator<'gen> {
             ))
         }
 
-        for (name, method) in &structure.methods {
-            self.codegen_fn_def(method, local_ctx.with_self(Some(ty.sig())))?;
+        for (_name, method) in &structure.methods {
+            self.codegen_fn_def(
+                method,
+                local_ctx.with_self(Some(ImplCtx {
+                    self_type: ty.sig(),
+                    self_name: struct_name.clone(),
+                })),
+            )?;
         }
 
         Ok(())
@@ -195,18 +204,24 @@ impl<'gen> CodeGenerator<'gen> {
         mut local_ctx: LocalCodegenContext<'gen>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         debug!("generator::CodeGenerator::codegen_fn_def");
-        let Some(func_reg) = local_ctx.names.get(&func.name) else {
-            return Err(format!("Function not found: {}", func.name).into());
+        let func_name = if let Some(impl_ctx) = &local_ctx.impl_ctx {
+            impl_ctx.self_name.clone() + "." + &func.name
+        } else {
+            func.name.clone()
+        };
+
+        let Some(func_reg) = local_ctx.names.get(&func_name) else {
+            return Err(format!("1Function not found: {}", func_name).into());
         };
 
         let Some(llvm_ty) = func_reg.ty.llvm_ty.clone() else {
-            return Err(format!("Function not found: {}", func.name).into());
+            return Err(format!("2Function not found: {}", func_name).into());
         };
 
-        let llvm_fn =
-            self.ctx
-                .llvm_module
-                .add_function(&func.name.clone(), llvm_ty.function()?, None);
+        let llvm_fn = self
+            .ctx
+            .llvm_module
+            .add_function(&func_name, llvm_ty.function()?, None);
 
         for param in func.params.values() {
             let type_sig = param.ty.sig();
@@ -785,6 +800,9 @@ impl<'gen> CodeGenerator<'gen> {
             let Some(alloc) = name.alloc else {
                 return Err(format!("Name alloc not found: {}", name.name).into());
             };
+            if local_ctx.is_self_arg && name.ty.ty.is_struct_type() {
+                return Ok(alloc.as_basic_value_enum());
+            }
             let name = name.clone();
             let var = self.ctx.ir_builder.build_load(alloc, &name.name);
             Ok(var)
@@ -1086,22 +1104,99 @@ impl<'gen> CodeGenerator<'gen> {
             fn_call.callee
         ));
 
-        let callee_name = match *fn_call.callee.clone() {
+        let (callee_name, callee, self_arg) = match fn_call.callee.as_ref() {
             TypedExpression {
                 expr: TypedExpressionData::Identifier { name },
                 ..
-            } => name,
+            } => {
+                // Function call
+                (
+                    name.clone(),
+                    self.ctx
+                        .llvm_module
+                        .get_function(&name)
+                        .ok_or_else(|| format!("Callee {} not found", name))?,
+                    None,
+                )
+            }
+            TypedExpression {
+                expr:
+                    TypedExpressionData::MemberAccess {
+                        member_access:
+                            TypedMemberAccess {
+                                object,
+                                member,
+                                computed,
+                            },
+                    },
+                ..
+            } => {
+                // Member function call
+                let object_val = self.codegen_expression(&object, local_ctx.clone(), &mut false)?;
+                let Some(object_val) = object_val else {
+                    return Err("Object is None".into());
+                };
+                // check that object is struct
+                let Some(object_type) = &object.ty else {
+                    return Err("Object type is None".into());
+                };
+                let object_type = object_type.sig();
+                let struct_ty = if let TypeSignature::Pointer(pointer) = &object_type {
+                    if let TypeSignature::Struct(s_id) = pointer.target.as_ref() {
+                        local_ctx.structs.get(s_id).ok_or_else(|| {
+                            format!("Struct not found: {}:{}:{}", file!(), line!(), s_id)
+                        })?
+                    } else {
+                        return Err("Object is not a struct".into());
+                    }
+                } else {
+                    if let TypeSignature::Struct(s_id) = &object_type {
+                        local_ctx.structs.get(s_id).ok_or_else(|| {
+                            format!("Struct not found: {}:{}:{}", file!(), line!(), s_id)
+                        })?
+                    } else {
+                        return Err("Object is not a struct".into());
+                    }
+                };
+                let TypedExpression {
+                    expr: TypedExpressionData::Identifier { name },
+                    ..
+                } = member.as_ref().clone() else {
+                    return Err("Member is not an identifier".into());
+                };
+
+                let full_name = struct_ty.name.clone() + "." + &name;
+
+                let llvm_fn = self
+                    .ctx
+                    .llvm_module
+                    .get_function(full_name.as_str())
+                    .ok_or_else(|| format!("Member callee {} not found", full_name))?;
+
+                (full_name.clone(), llvm_fn, Some(object_val))
+            }
             _ => unreachable!("Member function calls not yet supported in codegen"),
         };
 
-        let callee = self
-            .ctx
-            .llvm_module
-            .get_function(&callee_name)
-            .ok_or_else(|| format!("Callee {} not found", callee_name))?;
-
         let mut args = Vec::new();
-        for arg in &fn_call.args {
+
+        for (idx, arg) in fn_call.args.iter().enumerate() {
+            if self_arg.is_some() && idx == 0 {
+                let arg = self.codegen_expression(arg, local_ctx.self_arg(true), &mut false)?;
+                let arg = match arg {
+                    Some(BasicValueEnum::ArrayValue(v)) => BasicMetadataValueEnum::ArrayValue(v),
+                    Some(BasicValueEnum::IntValue(v)) => BasicMetadataValueEnum::IntValue(v),
+                    Some(BasicValueEnum::FloatValue(v)) => BasicMetadataValueEnum::FloatValue(v),
+                    Some(BasicValueEnum::PointerValue(v)) => {
+                        BasicMetadataValueEnum::PointerValue(v)
+                    }
+                    Some(BasicValueEnum::StructValue(v)) => BasicMetadataValueEnum::StructValue(v),
+                    Some(BasicValueEnum::VectorValue(v)) => BasicMetadataValueEnum::VectorValue(v),
+                    None => return Err("Argument is None".into()),
+                };
+                args.push(arg);
+                continue;
+            }
             let arg = self.codegen_expression(arg, local_ctx.clone(), &mut false)?;
             let arg = match arg {
                 Some(BasicValueEnum::ArrayValue(v)) => BasicMetadataValueEnum::ArrayValue(v),

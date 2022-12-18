@@ -29,5 +29,7 @@ fn main() -> i32 {
         b: 5,
     };
     t.set_a(5);
+    printf("test.a: %d\n", *t.a);
+    free(t as i8*);
     return 0;
 }

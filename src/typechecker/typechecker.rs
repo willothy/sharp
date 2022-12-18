@@ -928,11 +928,12 @@ impl<'tc> TypeChecker<'tc> {
                 ))?;
 
                 let member_fn_ty = member_method.fn_ty.clone();
+                let full_name = struct_ty.name.clone() + "." + &member_name;
                 local_ctx
                     .names
-                    .insert(member_name.clone(), Name { ty: member_fn_ty });
-                let name = local_ctx.names.get(&member_name).unwrap();
-                (name, member_name, Some(object))
+                    .insert(full_name.clone(), Name { ty: member_fn_ty });
+                let name = local_ctx.names.get(&full_name).unwrap();
+                (name, full_name, Some(object))
             }
             _ => return Err(format!("Unsupported callee type {:?}", fn_call.callee)),
         };
