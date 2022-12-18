@@ -1,0 +1,33 @@
+
+fn printf(str format, ...) -> i32;
+fn malloc(i64 size) -> i8*;
+fn free(i8* ptr);
+
+struct Test {
+    i32 a,
+    i32 b,
+}
+
+impl Test {
+    fn new() -> Test {
+        return Test {
+            a: 0,
+            b: 0,
+        };
+    }
+
+    fn set_a(self, i32 a) {
+        *self.a = a;
+        return;
+    }
+}
+
+fn main() -> i32 {
+    let Test* t = malloc(sizeof(Test)) as Test*;
+    *t = Test {
+        a: 0,
+        b: 5,
+    };
+    t.set_a(5);
+    return 0;
+}

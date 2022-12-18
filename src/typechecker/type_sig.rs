@@ -293,6 +293,7 @@ pub struct FunctionType<'fn_type> {
     pub return_type: Option<TypeRef<'fn_type>>,
     pub params: HashMap<String, TypedFunctionParameter<'fn_type>>,
     pub variadic: bool,
+    pub has_self_param: bool,
 }
 
 impl<'fn_type> PartialEq for FunctionType<'fn_type> {

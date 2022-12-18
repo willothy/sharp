@@ -296,7 +296,7 @@ fn keyword<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
         tag("use"),
         tag("mod"),
         //tag("as"),
-        tag("self"),
+        //tag("self"),
         tag("impl"),
         tag("sizeof"),
     ))(input)
@@ -316,7 +316,6 @@ fn keyword<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
                 "fn" => TokenKind::Keyword(Keyword::Function),
                 "use" => TokenKind::Keyword(Keyword::Use),
                 "mod" => TokenKind::Keyword(Keyword::Module),
-                //"as" => TokenKind::Keyword(Keyword::As),
                 "self" => TokenKind::Keyword(Keyword::Self_),
                 "impl" => TokenKind::Keyword(Keyword::Impl),
                 "sizeof" => TokenKind::Keyword(Keyword::SizeOf),
@@ -520,9 +519,22 @@ fn boolean_literal<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
 }
 
 fn comment<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
-    let (input, _) = tag("//")(input)?;
-    let (input, _) = take_until("\n")(input)?;
-    Ok((input, TokenKind::Comment))
+    // single or multiline comments
+    let (input, result) = alt((tag("//"), tag("/*")))(input)?;
+    match result.fragment() {
+        &"//" => {
+            let (input, _) = take_until("\n")(input)?;
+            Ok((input, TokenKind::Comment))
+        }
+        &"/*" => {
+            let (input, _) = tuple((take_until("*/"), tag("*/")))(input)?;
+            Ok((input, TokenKind::Comment))
+        }
+        _ => Err(Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Tag,
+        ))),
+    }
 }
 
 fn identifier<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {

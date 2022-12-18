@@ -61,6 +61,7 @@ impl<'gen> CodeGenerator<'gen> {
             current_fn: None,
             structs: HashMap::new(),
             loop_ctx: None,
+            self_type: None,
         };
 
         self.ctx.add_primitive_types(&mut local_ctx);
@@ -131,16 +132,6 @@ impl<'gen> CodeGenerator<'gen> {
         debug!("generator::CodeGenerator::codegen_struct");
         let TypedStructDeclaration { name, ty, .. } = structure;
         let struct_t = self.ctx.to_llvm_ty(&ty.sig(), &local_ctx.structs)?;
-        /* let structure = self.ctx.llvm_ctx.opaque_struct_type(name);
-        let mut fds = Vec::new();
-        for field in fields {
-            let sig = field.ty.sig();
-            let basic = self.ctx.to_llvm_ty(&sig, &local_ctx.structs)?;
-            fds.push(basic.basic()?);
-        }
-
-        let fields_slice = fds.as_slice();
-        structure.set_body(fields_slice, false); */
 
         local_ctx.types.insert(
             ty.sig(),
@@ -150,15 +141,27 @@ impl<'gen> CodeGenerator<'gen> {
                 llvm_ty: Some(struct_t),
             }),
         );
+        let Some(struct_t) = local_ctx.types.get(&ty.sig()) else {
+            return Err(format!("Type not found: {:?} {}:{}", ty.sig(), file!(), line!()).into());
+        };
 
-        // add struct to context
+        for (name, method) in &structure.methods {
+            let TypeSignature::Function(func_ty) = method.fn_ty.sig() else {
+                return Err(format!("Type not found: {:?} {}:{}", method.fn_ty.sig(), file!(), line!()).into());
+            };
+            local_ctx.add_name(CodegenName::new(
+                name.clone(),
+                Rc::new(CodegenType {
+                    name: name.clone(),
+                    ty: method.fn_ty.sig(),
+                    llvm_ty: Some(self.ctx.function_to_llvm_ty(&func_ty, &local_ctx.structs)?),
+                }),
+            ))
+        }
 
-        /* let Some(s) = self.ctx.llvm_ctx.get_struct_type(name) else {
-            return Err(format!("Type not found: {:?} {}:{}", ty, file!(), line!()).into());
-        }; */
-
-        // add struct to module
-        /* self.ctx.llvm_module.get_struct_type(name); */
+        for (name, method) in &structure.methods {
+            self.codegen_fn_def(method, local_ctx.with_self(Some(ty.sig())))?;
+        }
 
         Ok(())
     }
@@ -421,8 +424,14 @@ impl<'gen> CodeGenerator<'gen> {
             local_ctx.current_fn.unwrap().get_name()
         ));
         let res = match init {
-            TypedExpression { expr: TypedExpressionData::BinaryOp { left, right, op }, .. } => Some(self.codegen_binary_op(left, right, op, local_ctx)?),
-            TypedExpression { expr: TypedExpressionData::AsExpr { expr, ty }, .. } => {
+            TypedExpression {
+                expr: TypedExpressionData::BinaryOp { left, right, op },
+                ..
+            } => Some(self.codegen_binary_op(left, right, op, local_ctx)?),
+            TypedExpression {
+                expr: TypedExpressionData::AsExpr { expr, ty },
+                ..
+            } => {
                 let Some(expr) = self.codegen_expression(expr, local_ctx.clone(), did_break)? else {
                     return Err("Expected value from expression".into());
                 };
@@ -440,7 +449,10 @@ impl<'gen> CodeGenerator<'gen> {
                 };
                 Some(res)
             }
-            TypedExpression { expr: TypedExpressionData::LogicalOp { left, right, op }, .. } => {
+            TypedExpression {
+                expr: TypedExpressionData::LogicalOp { left, right, op },
+                ..
+            } => {
                 let Some(left) = self.codegen_expression(left, local_ctx.clone(), did_break)? else {
                     return Err("Expected value from expression".into());
                 };
@@ -456,7 +468,10 @@ impl<'gen> CodeGenerator<'gen> {
 
                 Some(res)
             }
-            TypedExpression { expr: TypedExpressionData::UnaryOp { expr, op }, .. } => match op {
+            TypedExpression {
+                expr: TypedExpressionData::UnaryOp { expr, op },
+                ..
+            } => match op {
                 Operator::Plus => self.codegen_expression(expr, local_ctx.clone(), did_break)?,
                 Operator::Minus => {
                     // Negate
@@ -518,10 +533,24 @@ impl<'gen> CodeGenerator<'gen> {
                 _ => return Err(format!("Invalid unary operator: {:?}", op).into()),
             },
 
-            TypedExpression { expr: TypedExpressionData::Identifier { name }, .. } => Some(self.codegen_identifier(name, local_ctx)?),
-            TypedExpression { expr: TypedExpressionData::Literal { literal }, .. } => Some(self.codegen_literal(literal, local_ctx)?),
-            TypedExpression { expr: TypedExpressionData::If { expr }, .. } => {
-                let TypedIfExpression { condition, body, else_body, .. } = expr;
+            TypedExpression {
+                expr: TypedExpressionData::Identifier { name },
+                ..
+            } => Some(self.codegen_identifier(name, local_ctx)?),
+            TypedExpression {
+                expr: TypedExpressionData::Literal { literal },
+                ..
+            } => Some(self.codegen_literal(literal, local_ctx)?),
+            TypedExpression {
+                expr: TypedExpressionData::If { expr },
+                ..
+            } => {
+                let TypedIfExpression {
+                    condition,
+                    body,
+                    else_body,
+                    ..
+                } = expr;
 
                 let Some(condition) = self.codegen_expression(condition, local_ctx.clone(), did_break)? else {
                     return Err("Expected value from expression".into());
@@ -591,7 +620,10 @@ impl<'gen> CodeGenerator<'gen> {
 
                 res
             }
-            TypedExpression { expr: TypedExpressionData::Block { block }, .. } => {
+            TypedExpression {
+                expr: TypedExpressionData::Block { block },
+                ..
+            } => {
                 let mut res = None;
                 let mut block_scope = local_ctx.clone();
                 for statement in &block.statements {
@@ -599,11 +631,26 @@ impl<'gen> CodeGenerator<'gen> {
                 }
                 res
             }
-            TypedExpression { expr: TypedExpressionData::VarAssignment { var_assign }, .. } => Some(self.codegen_var_assignment(var_assign, local_ctx)?),
-            TypedExpression { expr: TypedExpressionData::FnCall { fn_call }, .. } => self.codegen_fn_call(fn_call, local_ctx)?,
-            TypedExpression { expr: TypedExpressionData::MemberAccess { member_access }, .. } => Some(self.codegen_member_access(member_access, local_ctx)?),
-            TypedExpression { expr: TypedExpressionData::StructInitializer { struct_init }, .. } => Some(self.codegen_struct_init(struct_init, local_ctx)?),
-            TypedExpression { expr: TypedExpressionData::SizeOfExpr { ty }, .. } => {
+            TypedExpression {
+                expr: TypedExpressionData::VarAssignment { var_assign },
+                ..
+            } => Some(self.codegen_var_assignment(var_assign, local_ctx)?),
+            TypedExpression {
+                expr: TypedExpressionData::FnCall { fn_call },
+                ..
+            } => self.codegen_fn_call(fn_call, local_ctx)?,
+            TypedExpression {
+                expr: TypedExpressionData::MemberAccess { member_access },
+                ..
+            } => Some(self.codegen_member_access(member_access, local_ctx)?),
+            TypedExpression {
+                expr: TypedExpressionData::StructInitializer { struct_init },
+                ..
+            } => Some(self.codegen_struct_init(struct_init, local_ctx)?),
+            TypedExpression {
+                expr: TypedExpressionData::SizeOfExpr { ty },
+                ..
+            } => {
                 let Some(size) = self.ctx.to_llvm_ty(&ty.sig(), &local_ctx.structs)?.basic()?.size_of() else {
                     return Err("Expected size".into());
                 };
@@ -620,7 +667,10 @@ impl<'gen> CodeGenerator<'gen> {
     ) -> Result<BasicValueEnum<'gen>, Box<dyn Error>> {
         debug!("generator::CodeGenerator::codegen_literal");
         let t = match literal {
-            TypedLiteral { literal: Literal::Str(s, _pos), .. } => {
+            TypedLiteral {
+                literal: Literal::Str(s, _pos),
+                ..
+            } => {
                 let s = self
                     .ctx
                     .ir_builder
@@ -658,7 +708,10 @@ impl<'gen> CodeGenerator<'gen> {
                 };
                 ty.float_type()?.const_float(*f).as_basic_value_enum()
             }
-            TypedLiteral { literal: Literal::Char(_c, _pos), .. } => unimplemented!("codegen char literal"),
+            TypedLiteral {
+                literal: Literal::Char(_c, _pos),
+                ..
+            } => unimplemented!("codegen char literal"),
             TypedLiteral {
                 ty,
                 literal: Literal::Bool(b, pos),
@@ -1034,8 +1087,11 @@ impl<'gen> CodeGenerator<'gen> {
         ));
 
         let callee_name = match *fn_call.callee.clone() {
-            TypedExpression { expr: TypedExpressionData::Identifier { name }, .. } => name,
-            _ => unreachable!(),
+            TypedExpression {
+                expr: TypedExpressionData::Identifier { name },
+                ..
+            } => name,
+            _ => unreachable!("Member function calls not yet supported in codegen"),
         };
 
         let callee = self

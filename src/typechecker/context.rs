@@ -20,6 +20,13 @@ pub struct LocalTypecheckContext<'ctx> {
     pub return_type: Option<TypeRef<'ctx>>,
     pub result_type: Option<TypeRef<'ctx>>,
     pub in_loop: bool,
+    pub impl_ctx: Option<ImplContext<'ctx>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ImplContext<'ctx> {
+    pub struct_ty: TypeRef<'ctx>,
+    //pub trait_ty: TypeRef<'ctx>,
 }
 
 impl<'ctx> From<&TypeCheckContext<'ctx>> for LocalTypecheckContext<'ctx> {
@@ -29,6 +36,7 @@ impl<'ctx> From<&TypeCheckContext<'ctx>> for LocalTypecheckContext<'ctx> {
             return_type: None,
             result_type: None,
             in_loop: false,
+            impl_ctx: None,
         }
     }
 }
@@ -43,6 +51,22 @@ impl<'ctx> LocalTypecheckContext<'ctx> {
     pub fn enter_loop(&self) -> Self {
         let mut new = self.clone();
         new.in_loop = true;
+        new
+    }
+
+    pub fn new() -> Self {
+        Self {
+            names: HashMap::new(),
+            return_type: None,
+            result_type: None,
+            in_loop: false,
+            impl_ctx: None,
+        }
+    }
+
+    pub fn impl_method(struct_ty: TypeRef<'ctx>) -> Self {
+        let mut new = Self::new();
+        new.impl_ctx = Some(ImplContext { struct_ty });
         new
     }
 }

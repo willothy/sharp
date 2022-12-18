@@ -32,6 +32,7 @@ pub struct TypedFunctionDefinition<'ast> {
     pub body: TypedBlock<'ast>,
     pub fn_ty: TypeRef<'ast>,
     pub variadic: bool,
+    pub has_self_param: bool,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -47,6 +48,7 @@ pub struct TypedFunctionDeclaration<'ast> {
 pub struct TypedStructDeclaration<'ast> {
     pub name: String,
     pub fields: Vec<TypedStructField<'ast>>,
+    pub methods: HashMap<String, TypedFunctionDefinition<'ast>>,
     pub ty: TypeRef<'ast>,
     pub id: usize,
 }

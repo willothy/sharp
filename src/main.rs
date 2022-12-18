@@ -33,7 +33,6 @@ macro_rules! debugln {
     };
 }
 
-// TODO: Pointer and primitive casting (As expression)
 // TODO: Struct member functions
 // TODO: Modules and imports
 // TODO: Arrays

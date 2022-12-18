@@ -28,6 +28,7 @@ struct Parser<'parser> {
     current: usize,
     lookahead: usize,
     lifetime: std::marker::PhantomData<&'parser ()>,
+    impl_ctx: Option<String>,
 }
 
 impl<'parser> Parser<'parser> {
@@ -38,6 +39,7 @@ impl<'parser> Parser<'parser> {
             lookahead: 1,
             lifetime: std::marker::PhantomData,
             source,
+            impl_ctx: None,
         }
     }
 
@@ -174,6 +176,67 @@ impl<'parser> Parser<'parser> {
                     let module = self.module_decl()?;
                     submodules.push(module);
                 }
+                Some(TokenKind::Keyword(Keyword::Impl)) => {
+                    self.eat(TokenKind::Keyword(Keyword::Impl))?;
+                    let type_name = if let Some(TokenKind::Identifier(name)) = self.advance() {
+                        name
+                    } else {
+                        return Err(format!(
+                            "Expected identifier, got {:?} at {}",
+                            self.current(),
+                            self.debug_position()
+                        ));
+                    };
+
+                    let Some(Declaration::Struct(struct_decl)) = body.iter_mut().find(|decl| {
+                        if let Declaration::Struct(struct_decl) = decl {
+                            struct_decl.name == type_name
+                        } else {
+                            false
+                        }
+                    }) else {
+                        return Err(format!(
+                            "No struct with name {} found at {}",
+                            type_name,
+                            self.debug_position()
+                        ));
+                    };
+
+                    self.eat(TokenKind::Symbol(Symbol::OpenBrace))?;
+
+                    self.impl_ctx = Some(struct_decl.name.clone());
+
+                    loop {
+                        match self.current() {
+                            Some(TokenKind::Keyword(Keyword::Function)) => {
+                                let fn_sig = self.function_sig()?;
+                                if let Some(TokenKind::Symbol(Symbol::Semicolon)) = self.current() {
+                                    let _func_decl: FunctionDeclaration =
+                                        self.function_decl(fn_sig)?;
+                                    unreachable!("No extern functions in impls");
+                                    // body.push(Declaration::FunctionDecl(func_decl));
+                                } else {
+                                    let func = self.function_def(fn_sig)?;
+                                    struct_decl.methods.push(func);
+                                    // body.push(Declaration::FunctionDef(func));
+                                }
+                            }
+                            Some(TokenKind::Symbol(Symbol::CloseBrace)) => {
+                                break;
+                            }
+                            Some(_) => {
+                                return Err(format!(
+                                    "Unexpected token {:?} at {}",
+                                    self.current(),
+                                    self.debug_position()
+                                ))
+                            }
+                            None => break,
+                        }
+                    }
+
+                    self.eat(TokenKind::Symbol(Symbol::CloseBrace))?;
+                }
                 Some(TokenKind::Symbol(Symbol::CloseBrace)) => {
                     break;
                 }
@@ -255,17 +318,62 @@ impl<'parser> Parser<'parser> {
                 continue;
             }
 
+            if let Some(TokenKind::Identifier(maybe_self)) = self.current() {
+                if maybe_self.as_str() == "self" {
+                    if param_idx != 0 {
+                        return Err(format!(
+                            "Self must be the first parameter at {}",
+                            self.debug_position()
+                        ));
+                    }
+                    let Some(struct_decl) = &self.impl_ctx else {
+                        return Err(format!(
+                            "Self can only be used in impls at {}",
+                            self.debug_position()
+                        ));
+                    };
+                    params.push(FunctionParameter {
+                        name: "self".to_string(),
+                        type_name: "*".to_string() + struct_decl,
+                        idx: param_idx,
+                        span: self.span_end(span)?,
+                    });
+                    param_idx += 1;
+                    self.advance();
+
+                    if let Some(TokenKind::Symbol(Symbol::Comma)) = self.current() {
+                        self.advance();
+                    } else if let Some(TokenKind::Symbol(Symbol::CloseParen)) = self.current() {
+                    } else {
+                        return Err(format!(
+                            "Expected comma or close paren, got {:?} at {}",
+                            self.current(),
+                            self.debug_position()
+                        ));
+                    }
+                    continue;
+                }
+            }
+
             let param_type = self.type_name()?;
 
             let param_name = if let Some(TokenKind::Identifier(param_name)) = self.current() {
                 param_name.clone()
             } else {
                 return Err(format!(
-                    "Expected identifier, got {:?} at {}",
+                    "Invalid param: expected identifier, got {:?} at {}",
                     self.current(),
                     self.debug_position()
                 ));
             };
+
+            params.push(FunctionParameter {
+                name: param_name,
+                type_name: param_type,
+                idx: param_idx,
+                span: self.span_end(span)?,
+            });
+            param_idx += 1;
 
             self.advance();
 
@@ -279,13 +387,6 @@ impl<'parser> Parser<'parser> {
                     self.debug_position()
                 ));
             }
-            params.push(FunctionParameter {
-                name: param_name,
-                type_name: param_type,
-                idx: param_idx,
-                span: self.span_end(span)?,
-            });
-            param_idx += 1;
         }
         Ok((params, variadic))
     }

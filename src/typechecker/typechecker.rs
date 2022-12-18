@@ -11,7 +11,7 @@ use crate::{
     tokenizer::{Literal, Operator},
     typechecker::{
         context::new_type,
-        type_sig::{Name, Type, TypeSignature},
+        type_sig::{Name, PointerType, Type, TypeSignature},
         typed_ast::{TypedExpression, TypedResultStatement, TypedReturnStatement},
     },
 };
@@ -120,7 +120,8 @@ impl<'tc> TypeChecker<'tc> {
         let Function(FunctionType {
             return_type,
             params,
-            variadic
+            variadic,
+            has_self_param: _
         }) = &fn_type.sig else {
             return Err(format!(
                 "Expected function type, found {:?}",
@@ -156,7 +157,8 @@ impl<'tc> TypeChecker<'tc> {
         let Function(FunctionType {
             return_type,
             params,
-            variadic
+            variadic,
+            has_self_param
         }) = &fn_type.sig else {
             return Err(format!(
                 "Expected function type, found {:?}",
@@ -180,6 +182,7 @@ impl<'tc> TypeChecker<'tc> {
             body,
             fn_ty: new_type(fn_type.clone()),
             variadic: variadic.clone(),
+            has_self_param: *has_self_param,
         })
     }
 
@@ -218,7 +221,12 @@ impl<'tc> TypeChecker<'tc> {
         var_stmt: &VarDeclaration,
         local_ctx: &mut LocalTypecheckContext<'tc>,
     ) -> Result<TypedStatement<'tc>, String> {
-        let VarDeclaration { name, type_name, initializer, .. } = var_stmt;
+        let VarDeclaration {
+            name,
+            type_name,
+            initializer,
+            ..
+        } = var_stmt;
         let ty = self.ctx.get_type(type_name.clone())?;
         let initializer: Option<TypedExpression> = if let Some(init) = initializer {
             Some(self.typecheck_expression(init, local_ctx.expect_result(Some(ty.clone()).into()))?)
@@ -322,11 +330,13 @@ impl<'tc> TypeChecker<'tc> {
     ) -> Result<TypedExpression<'tc>, String> {
         debug!(format!("typechecker::typecheck_expression: {:?}", expr));
         match expr {
-            Expression::BinaryOp { left, right, op, .. } => self.typecheck_binary_op(left, right, op, local_ctx),
-            Expression::LogicalOp { left, right, op, .. } => self.typecheck_logical_op(left, right, op, local_ctx),
-            Expression::UnaryOp { expr, op, .. } => {
-                self.typecheck_unary_op(expr, op, local_ctx)
-            }
+            Expression::BinaryOp {
+                left, right, op, ..
+            } => self.typecheck_binary_op(left, right, op, local_ctx),
+            Expression::LogicalOp {
+                left, right, op, ..
+            } => self.typecheck_logical_op(left, right, op, local_ctx),
+            Expression::UnaryOp { expr, op, .. } => self.typecheck_unary_op(expr, op, local_ctx),
             Expression::Identifier { name, .. } => {
                 let var = local_ctx
                     .names
@@ -538,7 +548,9 @@ impl<'tc> TypeChecker<'tc> {
                     return Err("Invalid argument to sizeof".to_string());
                 }
             }
-            Expression::AsExpr { expr, type_name, .. } => {
+            Expression::AsExpr {
+                expr, type_name, ..
+            } => {
                 let expr = self.typecheck_expression(expr, local_ctx)?;
                 let as_ty = self.ctx.get_type(type_name.clone())?;
                 let Some(expr_ty) = expr.ty.clone() else {
@@ -669,42 +681,6 @@ impl<'tc> TypeChecker<'tc> {
         structure: &StructDeclaration,
     ) -> Result<TypedStructDeclaration<'tc>, String> {
         debug!("typechecker::typecheck_struct_decl");
-        /* let id = self.ctx.get_next_struct_id();
-        self.ctx.add_type(
-            structure.name.clone(),
-            new_type(Type::new(TypeSignature::Struct(Err(id)))),
-        )?;
-
-        let mut fields = HashMap::new();
-
-        for field in &structure.fields {
-            let ty = self.ctx.get_type(field.type_name.clone())?;
-            fields.insert(
-                field.name.clone(),
-                TypedStructField {
-                    name: field.name.clone(),
-                    ty,
-                    idx: field.idx,
-                },
-            );
-        }
-
-        self.ctx.update_type(
-            structure.name.clone(),
-            new_type(Type::new(TypeSignature::Struct(Ok(StructType {
-                name: structure.name.clone(),
-                fields: fields.clone(),
-                methods: HashMap::new(),
-                id,
-            })))),
-        )?;
-
-        Ok(TypedStructDeclaration {
-            name: structure.name.clone(),
-            fields: fields.iter().map(|(_, x)| x.clone()).collect(),
-            ty: self.ctx.get_type(structure.name.clone())?,
-            id,
-        }) */
         let id = self.ctx.get_next_struct_id();
         self.ctx.add_type(
             structure.name.clone(),
@@ -725,24 +701,36 @@ impl<'tc> TypeChecker<'tc> {
                 },
             );
         }
+
+        let mut struct_type = StructType {
+            name: structure.name.clone(),
+            fields: fields.clone(),
+            methods: HashMap::new(),
+            id,
+        };
+
         let Ok(type_ref) = self.ctx.get_type(structure.name.clone()) else {
             return Err("".into())
         };
         *type_ref.borrow_mut() = Type::new(TypeSignature::Struct(id));
-        self.ctx.structs.insert(
-            id,
-            StructType {
-                name: structure.name.clone(),
-                fields: fields.clone(),
-                methods: HashMap::new(),
-                id,
-            },
-        );
+
+        self.ctx.structs.insert(id, struct_type.clone());
+
+        for method in &structure.methods {
+            // function def
+            let func = self
+                .typecheck_fn_def(method, LocalTypecheckContext::impl_method(type_ref.clone()))?;
+            struct_type.methods.insert(method.name.clone(), func);
+        }
+
+        self.ctx.structs.insert(id, struct_type.clone());
+
         Ok(TypedStructDeclaration {
             name: structure.name.clone(),
             fields: fields.values().map(|field| field.clone()).collect(),
             ty: type_ref,
             id,
+            methods: struct_type.methods.clone(),
         })
     }
 
@@ -849,6 +837,7 @@ impl<'tc> TypeChecker<'tc> {
                 return_type,
                 params,
                 variadic: function.variadic,
+                has_self_param: false,
             }),
         })
     }
@@ -858,9 +847,12 @@ impl<'tc> TypeChecker<'tc> {
         function: &FunctionDefinition,
     ) -> Result<type_sig::Type<'tc>, String> {
         let mut params = HashMap::new();
+        let mut has_self_param = false;
         for param in &function.params {
             let t = self.ctx.get_type(param.type_name.clone())?;
-
+            if param.name == "self" {
+                has_self_param = true;
+            }
             params.insert(
                 param.name.clone(),
                 TypedFunctionParameter {
@@ -880,6 +872,7 @@ impl<'tc> TypeChecker<'tc> {
                 return_type,
                 params,
                 variadic: function.variadic,
+                has_self_param,
             }),
         })
     }
@@ -887,28 +880,83 @@ impl<'tc> TypeChecker<'tc> {
     fn typecheck_fn_call(
         &self,
         fn_call: &ast::FunctionCall,
-        local_ctx: LocalTypecheckContext<'tc>,
+        mut local_ctx: LocalTypecheckContext<'tc>,
     ) -> Result<TypedExpression<'tc>, String> {
         debug!("typechecker::typecheck_fn_call");
-        let fn_name = match *fn_call.callee.clone() {
-            Expression::Identifier { name, .. } => name,
-            _ => return Err("Unsupported callee type".into()),
+
+        let (fn_type, fn_name, member_self_type) = match *fn_call.callee.clone() {
+            Expression::Identifier { name, .. } => (
+                local_ctx
+                    .names
+                    .get(&name)
+                    .ok_or(format!("Function {} is not defined in this scope", name))?,
+                name,
+                None,
+            ),
+            Expression::MemberAccess { member_access } => {
+                let object = self.typecheck_expression(&member_access.object, local_ctx.clone())?;
+
+                let Some(object_type) = &object.ty else {
+                    return Err(format!("Cannot access member of non-existant type"));
+                };
+                let object_sig = object_type.sig();
+
+                let Some(struct_ty) = (match &object_sig {
+                    TypeSignature::Struct(s) => self.ctx.structs.get(&s),
+                    TypeSignature::Pointer(PointerType {
+                        target,
+                    }) => {
+                        match target.as_ref() {
+                            TypeSignature::Struct(s_id) => {
+                                self.ctx.structs.get(&s_id)
+                            },
+                            _ => return Err(format!("Cannot access member of non-struct type {:?}", object_sig)),
+                        }
+                    }
+                    _ => return Err(format!("Cannot access member of non-struct type {:?}", object_sig)),
+                }) else {
+                    return Err(format!("Struct type does not exist"));
+                };
+
+                let Expression::Identifier { name: member_name, span: _ } = *member_access.member else {
+                    return Err(format!("Member access must be an identifier"));
+                };
+
+                let member_method = struct_ty.methods.get(&member_name).ok_or(format!(
+                    "Struct {} does not have a method {}",
+                    struct_ty.name, member_name
+                ))?;
+
+                let member_fn_ty = member_method.fn_ty.clone();
+                local_ctx
+                    .names
+                    .insert(member_name.clone(), Name { ty: member_fn_ty });
+                let name = local_ctx.names.get(&member_name).unwrap();
+                (name, member_name, Some(object))
+            }
+            _ => return Err(format!("Unsupported callee type {:?}", fn_call.callee)),
         };
-        let fn_type = local_ctx
-            .names
-            .get(&fn_name)
-            .ok_or(format!("Function {} is not defined in this scope", fn_name))?;
-        let ret_type = match fn_type.ty.borrow_mut().sig.clone() {
+
+        let ret_type = match fn_type.ty.sig() {
             TypeSignature::Function(FunctionType { return_type, .. }) => return_type,
-            _ => return Err(format!("{} is not a function", fn_name)),
+            _ => return Err(format!("{:?} is not a function", fn_type.ty.sig())),
         };
         let mut args = Vec::new();
+        if let Some(t) = member_self_type {
+            args.push(t);
+        }
         for (arg_idx, arg) in fn_call.args.iter().enumerate() {
             let param_type = match fn_type.ty.sig() {
                 TypeSignature::Function(FunctionType {
-                    params, variadic, ..
+                    params,
+                    variadic,
+                    has_self_param,
+                    ..
                 }) => {
-                    let t = match params.iter().find(|(_, p)| p.idx as usize == arg_idx) {
+                    let t = match params
+                        .iter()
+                        .find(|(_, p)| p.idx as usize == (arg_idx + (has_self_param as usize)))
+                    {
                         Some((_, t)) => Some(t.ty.clone()),
                         None => {
                             if arg_idx > (params.len() - 1) {
@@ -1010,7 +1058,11 @@ impl<'tc> TypeChecker<'tc> {
         mut local_ctx: LocalTypecheckContext<'tc>,
     ) -> Result<TypedExpression<'tc>, String> {
         debug!("typechecker::typecheck_struct_init");
-        let StructInitializer { struct_name, fields, .. } = struct_init;
+        let StructInitializer {
+            struct_name,
+            fields,
+            ..
+        } = struct_init;
         let struct_type = self.ctx.get_type(struct_name.clone())?;
         let struct_sig = struct_type.sig();
 
@@ -1024,7 +1076,9 @@ impl<'tc> TypeChecker<'tc> {
 
         let mut typed_fields = Vec::new();
         for field in fields {
-            let StructInitializerField { field_name, value, .. } = field;
+            let StructInitializerField {
+                field_name, value, ..
+            } = field;
 
             let expected_field = decl_fields.get(field_name).ok_or(format!(
                 "Field {} does not exist in struct {}",
@@ -1068,7 +1122,12 @@ impl<'tc> TypeChecker<'tc> {
         local_ctx: LocalTypecheckContext<'tc>,
     ) -> Result<TypedExpression<'tc>, String> {
         debug!("typechecker::typecheck_member_access");
-        let MemberAccess { object, member, computed, .. } = member_access;
+        let MemberAccess {
+            object,
+            member,
+            computed,
+            ..
+        } = member_access;
 
         if *computed {
             unimplemented!("Computed member access is not supported yet");
@@ -1097,6 +1156,7 @@ impl<'tc> TypeChecker<'tc> {
                 result_type: local_ctx.result_type.clone(),
                 return_type: local_ctx.return_type.clone(),
                 in_loop: local_ctx.in_loop,
+                impl_ctx: None,
             };
 
             // add struct fields to internal context
@@ -1137,6 +1197,7 @@ impl<'tc> TypeChecker<'tc> {
                     result_type: local_ctx.result_type.clone(),
                     return_type: local_ctx.return_type.clone(),
                     in_loop: local_ctx.in_loop,
+                    impl_ctx: None,
                 };
 
                 let s = self
