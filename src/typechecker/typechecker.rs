@@ -1,13 +1,15 @@
 // Author: Will Hopkins
 
-use std::collections::HashMap;
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::{
     ast::{
-        self, Block, Declaration, Expression, FunctionDeclaration, FunctionDefinition,
-        MemberAccess, StructDeclaration, StructInitializer, StructInitializerField, VarDeclaration,
+        self, Block, Declaration, Expression, FmtPath, FunctionDeclaration, FunctionDefinition,
+        MemberAccess, Module, ModulePath, ScopeResolution, StructDeclaration, StructInitializer,
+        StructInitializerField, VarDeclaration,
     },
-    debug,
+    debug, debugln,
+    lowering::{Export, IntermediateModule, IntermediateProgram, ModuleId},
     tokenizer::{Literal, Operator},
     typechecker::{
         context::new_type,
@@ -17,96 +19,466 @@ use crate::{
 };
 
 use super::{
-    context::{LocalTypecheckContext, TypeCheckContext, TypeSig},
+    context::{LocalTypecheckContext, ModuleTypeCheckCtx, StructId, TypeRef, TypeSig},
     type_sig::{self, FunctionType, StructType, TypedFunctionParameter, TypedStructField},
     typed_ast::{
-        self, TypedBlock, TypedDeclaration, TypedExpressionData, TypedFunctionCall,
-        TypedFunctionDeclaration, TypedFunctionDefinition, TypedIfExpression, TypedLiteral,
-        TypedMemberAccess, TypedStatement, TypedStructDeclaration, TypedStructInitializer,
-        TypedStructInitializerField, TypedVarAssignment,
+        self, TypedBlock, TypedDeclaration, TypedExport, TypedExportType, TypedExpressionData,
+        TypedFunctionCall, TypedFunctionDeclaration, TypedFunctionDefinition, TypedIfExpression,
+        TypedImport, TypedLiteral, TypedMemberAccess, TypedModule, TypedStatement,
+        TypedStructDeclaration, TypedStructInitializer, TypedStructInitializerField,
+        TypedVarAssignment,
     },
 };
 
-#[derive(Debug, Clone)]
+/* #[derive(Debug, Clone)]
 pub struct TypeCheckModule<'tc> {
-    pub ctx: TypeCheckContext<'tc>,
-    pub module: super::typed_ast::TypedModule<'tc>,
-}
+    pub ctx: ModuleTypeCheckCtx<'tc>,
+    pub module: Rc<RefCell<TypedModule<'tc>>>,
+} */
 
 #[derive(Debug, Clone)]
 pub struct TypeChecker<'tc> {
-    pub ctx: TypeCheckContext<'tc>,
+    pub ctx: ModuleTypeCheckCtx<'tc>,
+    pub intermediate: IntermediateProgram,
+    pub modules: Vec<Rc<RefCell<TypedModule<'tc>>>>,
+    pub module_ids: HashMap<ModulePath, ModuleId>,
+    pub current_module_path: ModulePath,
+    pub next_struct_id: StructId,
+}
+
+pub trait TCModule<'ctx> {
+    fn get_fn_defs(&self) -> Vec<TypedFunctionDefinition<'ctx>>;
+    fn get_fn_decls(&self) -> Vec<TypedFunctionDeclaration<'ctx>>;
+    fn get_structs(&self) -> Vec<TypedStructDeclaration<'ctx>>;
+    fn get_submodules(&self) -> HashMap<String, ModuleId>;
+    fn get_requirements(&self) -> Vec<TypedImport>;
+    fn get_parent_id(&self) -> Option<ModuleId>;
+    fn get_path(&self) -> ast::ModulePath;
+    fn get_name(&self) -> String;
+    fn has_parent(&self) -> bool;
+    fn get_ctx(&self) -> ModuleTypeCheckCtx<'ctx>;
+}
+
+impl<'ctx> TCModule<'ctx> for Rc<RefCell<TypedModule<'ctx>>> {
+    fn get_fn_defs(&self) -> Vec<TypedFunctionDefinition<'ctx>> {
+        self.borrow().fn_defs.clone()
+    }
+
+    fn get_fn_decls(&self) -> Vec<TypedFunctionDeclaration<'ctx>> {
+        self.borrow().fn_decls.clone()
+    }
+
+    fn get_structs(&self) -> Vec<TypedStructDeclaration<'ctx>> {
+        self.borrow().structs.clone()
+    }
+
+    fn get_submodules(&self) -> HashMap<String, ModuleId> {
+        self.borrow().submodules.clone()
+    }
+
+    fn get_requirements(&self) -> Vec<TypedImport> {
+        self.borrow().dependencies.clone()
+    }
+
+    fn get_parent_id(&self) -> Option<ModuleId> {
+        self.borrow().parent.clone()
+    }
+
+    fn get_path(&self) -> ast::ModulePath {
+        self.borrow().path.clone()
+    }
+
+    fn get_name(&self) -> String {
+        self.borrow().name.clone()
+    }
+
+    fn has_parent(&self) -> bool {
+        self.borrow().parent.is_some()
+    }
+
+    fn get_ctx(&self) -> ModuleTypeCheckCtx<'ctx> {
+        self.borrow().ctx.clone()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TypeCheckerOutput<'tc> {
+    pub modules: Vec<Rc<RefCell<TypedModule<'tc>>>>,
+    pub module_ids: HashMap<ModulePath, ModuleId>,
 }
 
 impl<'tc> TypeChecker<'tc> {
-    pub fn new() -> Self {
+    pub fn new(intermediate: IntermediateProgram) -> Self {
         Self {
-            ctx: TypeCheckContext::new(),
+            intermediate,
+            ctx: ModuleTypeCheckCtx::new(),
+            modules: Vec::new(),
+            module_ids: HashMap::new(),
+            current_module_path: Vec::new(),
+            next_struct_id: 0,
         }
     }
 
-    pub fn typecheck_module(
-        &mut self,
-        module: ast::Module,
-    ) -> Result<TypeCheckModule<'tc>, String> {
-        debug!("typechecker::typecheck_module");
-        let mut typed_decls = Vec::new();
+    pub fn get_intermediate_module_export(&self, path: &ModulePath) -> Option<Export> {
+        let mut path = path.clone();
+        let Some(name) = path.pop() else {
+            return None;
+        };
+        let Some(module) = self.intermediate.get_module_by_path(&path).ok() else {
+            return None;
+        };
+        let module = module.borrow();
+        let Some(export) = module.exports.get(&name) else {
+            return None;
+        };
+        Some(export.clone())
+    }
 
-        // Resolve struct types
-        for decl in &module.body {
-            if let Declaration::Struct(s) = decl {
-                let typed_decl: TypedStructDeclaration<'tc> = self.typecheck_struct_decl(&s)?;
+    //pub fn combine_modules(&mut self) -> Result<IntermediateProgram
 
-                typed_decls.push(TypedDeclaration::Struct(typed_decl));
+    pub fn typecheck(&mut self) -> Result<TypeCheckerOutput<'tc>, String> {
+        // Preload struct names
+        for (path, module_id) in self.intermediate.module_ids.clone() {
+            self.module_ids.insert(path.clone(), module_id);
+            self.current_module_path = path.clone();
+
+            let Some(module) = self.intermediate.modules.get(module_id).cloned() else {
+                return Err(format!("Module with id {} not found", module_id));
+            };
+
+            let module = module.borrow();
+            for structure in &module.structs {
+                let id = self.get_next_struct_id();
+                self.ctx.types.insert(
+                    structure.name.clone(),
+                    new_type(Type {
+                        sig: TypeSignature::Struct(id),
+                    }),
+                );
             }
         }
 
-        let body = module.body;
+        // Load dependencies into context
 
-        // Resolve function types
-        for decl in &body {
-            if let Declaration::FunctionDef(f) = decl {
-                let fn_type = self.resolve_fn_def_type(&f)?;
-                self.ctx.names.insert(
-                    f.name.clone(),
-                    Name {
-                        ty: new_type(fn_type),
-                    },
-                );
-            } else if let Declaration::FunctionDecl(f) = decl {
-                let fn_type = self.resolve_fn_decl_type(&f)?;
-                self.ctx.names.insert(
-                    f.name.clone(),
-                    Name {
-                        ty: new_type(fn_type),
+        let mut all_structs: HashMap<StructId, Vec<TypedStructDeclaration>> = HashMap::new();
+        for (path, module_id) in self.intermediate.module_ids.clone() {
+            self.current_module_path = path.clone();
+            let Some(module) = self.intermediate.modules.get(module_id).cloned() else {
+                return Err(format!("Module with id {} not found", module_id));
+            };
+
+            let structs = self.typecheck_structs(module.clone())?;
+            all_structs.insert(module_id, structs);
+        }
+
+        for (path, module_id) in self.intermediate.module_ids.clone() {
+            self.current_module_path = path.clone();
+            let Some(module) = self.intermediate.modules.get(module_id).cloned() else {
+                return Err(format!("Module with id {} not found", module_id));
+            };
+            self.typecheck_struct_methods(module)?;
+        }
+
+        for (path, module_id) in self.intermediate.module_ids.clone() {
+            self.current_module_path = path.clone();
+
+            let Some(module) = self.intermediate.modules.get(module_id).cloned() else {
+                return Err(format!("Module with id {} not found", module_id));
+            };
+
+            let structs = all_structs.get(&module_id).cloned().unwrap();
+
+            let (fn_decls, fn_defs) = self.typecheck_functions(module.clone())?;
+
+            let submodules = module.borrow().submodules.clone();
+
+            let parent = module.borrow().parent.clone();
+
+            let name = module.borrow().name.clone();
+
+            let dependencies = module
+                .borrow()
+                .dependencies
+                .iter()
+                .map(|dep| TypedImport {
+                    name: dep.name.clone(),
+                    source_module: dep.source_module,
+                })
+                .collect::<Vec<TypedImport>>();
+
+            let exports = self.resolve_exports(module.clone(), &submodules)?;
+            let new_ctx = ModuleTypeCheckCtx::with_types(&self.ctx);
+
+            let module = TypedModule {
+                fn_defs,
+                fn_decls,
+                structs,
+                submodules,
+                dependencies,
+                parent,
+                exports,
+                path,
+                name,
+                id: module_id,
+                ctx: std::mem::replace(&mut self.ctx, new_ctx),
+            };
+            self.modules.push(Rc::new(RefCell::new(module)));
+        }
+
+        Ok(TypeCheckerOutput {
+            modules: self.modules.clone(),
+            module_ids: self.module_ids.clone(),
+        })
+    }
+
+    pub fn typecheck_struct_methods(
+        &mut self,
+        module: Rc<RefCell<IntermediateModule>>,
+    ) -> Result<(), String> {
+        for structure in &module.borrow().structs {
+            for method in &structure.methods {
+                let Ok(type_ref) = self.ctx.get_type(structure.name.clone()) else {
+                    return Err("".into())
+                };
+                let struct_id = if let TypeSignature::Struct(id) = type_ref.sig() {
+                    id
+                } else {
+                    return Err(format!("{} is not a struct", structure.name));
+                };
+
+                // function def
+                let func = self.typecheck_fn_def(
+                    method,
+                    LocalTypecheckContext::impl_method(type_ref.clone()),
+                )?;
+
+                let struct_ty = self.ctx.struct_types.get_mut(&struct_id).unwrap();
+
+                struct_ty.methods.insert(func.name.clone(), func);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn typecheck_structs(
+        &mut self,
+        module: Rc<RefCell<IntermediateModule>>,
+    ) -> Result<Vec<TypedStructDeclaration<'tc>>, String> {
+        let mut structs = Vec::new();
+        for structure in &module.borrow().structs {
+            /* let id = if let TypeSignature::Struct(id) =
+                self.ctx.get_type(structure.name.clone())?.sig()
+            {
+                id
+            } else {
+                return Err(format!("{} is not a struct", structure.name));
+            };
+
+            let mut fields = HashMap::new();
+            for field in &structure.fields {
+                let Ok(type_val) = self.ctx.get_type(field.type_name.clone()) else {
+                    return Err(format!("{} is not a valid type 590", field.type_name));
+                };
+
+                fields.insert(
+                    field.name.clone(),
+                    TypedStructField {
+                        name: field.name.clone(),
+                        ty: type_val.clone(),
+                        idx: field.idx,
                     },
                 );
             }
+
+            let mut struct_type = StructType {
+                name: structure.name.clone(),
+                fields: fields.clone(),
+                methods: HashMap::new(),
+                id,
+            };
+
+            let Ok(type_ref) = self.ctx.get_type(structure.name.clone()) else {
+                return Err("".into())
+            };
+            // *type_ref.borrow_mut() = Type::new(TypeSignature::Struct(id));
+
+            self.ctx.struct_types.insert(id, struct_type.clone());
+
+            for method in &structure.methods {
+                // function def
+                let func = self.typecheck_fn_def(
+                    method,
+                    LocalTypecheckContext::impl_method(type_ref.clone()),
+                )?;
+                struct_type.methods.insert(method.name.clone(), func);
+            }
+
+            structs.push(TypedStructDeclaration {
+                name: structure.name.clone(),
+                fields: fields.values().map(|field| field.clone()).collect(),
+                ty: type_ref,
+                id,
+                methods: struct_type.methods.clone(),
+            }); */
+
+            let id = if let TypeSignature::Struct(id) =
+                self.ctx.get_type(structure.name.clone())?.sig()
+            {
+                id
+            } else {
+                return Err(format!("{} is not a struct", structure.name));
+            };
+
+            let mut fields = HashMap::new();
+            for field in &structure.fields {
+                let type_val = self.ctx.get_type(field.type_name.clone())?;
+                fields.insert(
+                    field.name.clone(),
+                    TypedStructField {
+                        name: field.name.clone(),
+                        ty: type_val.clone(),
+                        idx: field.idx,
+                    },
+                );
+            }
+
+            let struct_type = StructType {
+                name: structure.name.clone(),
+                fields: fields.clone(),
+                methods: HashMap::new(),
+                id,
+            };
+
+            let Ok(type_ref) = self.ctx.get_type(structure.name.clone()) else {
+                return Err("".into())
+            };
+            //*type_ref.borrow_mut() = Type::new(TypeSignature::Struct(id));
+
+            self.ctx.struct_types.insert(id, struct_type.clone());
+
+            //self.ctx.struct_types.insert(id, struct_type.clone());
+
+            structs.push(TypedStructDeclaration {
+                name: structure.name.clone(),
+                fields: fields.values().map(|field| field.clone()).collect(),
+                ty: type_ref,
+                id,
+                methods: struct_type.methods.clone(),
+            });
+        }
+
+        Ok(structs)
+    }
+
+    pub fn typecheck_functions(
+        &mut self,
+        module: Rc<RefCell<IntermediateModule>>,
+    ) -> Result<
+        (
+            Vec<TypedFunctionDeclaration<'tc>>,
+            Vec<TypedFunctionDefinition<'tc>>,
+        ),
+        String,
+    > {
+        let mut fn_decls = Vec::new();
+        let mut fn_defs = Vec::new();
+
+        for decl in &module.borrow().fn_decls {
+            let fn_type = self.resolve_fn_decl_type(&decl)?;
+            self.ctx.functions.insert(
+                decl.name.clone(),
+                Name {
+                    ty: new_type(fn_type),
+                },
+            );
+        }
+        for def in &module.borrow().fn_defs {
+            let fn_type = self.resolve_fn_def_type(def)?;
+            self.ctx.functions.insert(
+                def.name.clone(),
+                Name {
+                    ty: new_type(fn_type),
+                },
+            );
         }
 
         let local_ctx = LocalTypecheckContext::from(&self.ctx);
 
-        // Typecheck functions
-        for decl in &body {
-            if let Declaration::FunctionDef(f) = decl {
-                let typed_decl = self.typecheck_fn_def(&f, local_ctx.clone())?;
-                typed_decls.push(TypedDeclaration::FunctionDef(typed_decl));
-            } else if let Declaration::FunctionDecl(f) = decl {
-                let typed_decl = self.typecheck_fn_decl(&f, local_ctx.clone())?;
-
-                typed_decls.push(TypedDeclaration::FunctionDecl(typed_decl));
-            }
+        for decl in &module.borrow().fn_decls {
+            let func = self.typecheck_fn_decl(decl, local_ctx.clone())?;
+            fn_decls.push(func);
         }
 
-        let typed_module = super::typed_ast::TypedModule {
-            name: module.name.clone(),
-            body: typed_decls,
-        };
+        for def in &module.borrow().fn_defs {
+            let func = self.typecheck_fn_def(def, local_ctx.clone())?;
+            fn_defs.push(func);
+        }
 
-        Ok(TypeCheckModule {
-            ctx: self.ctx.clone(),
-            module: typed_module,
-        })
+        Ok((fn_decls, fn_defs))
+    }
+
+    pub(crate) fn resolve_exports(
+        &self,
+        module: Rc<RefCell<IntermediateModule>>,
+        submodules: &HashMap<String, ModuleId>,
+    ) -> Result<HashMap<String, TypedExport<'tc>>, String> {
+        use crate::lowering::ExportType::*;
+        let module_exports = module.borrow().exports.clone();
+
+        let mut exports = HashMap::new();
+        for (name, export) in module_exports {
+            exports.insert(
+                name.clone(),
+                TypedExport {
+                    name: name.clone(),
+                    ty: match export.ty {
+                        FunctionDef(_) | FunctionDecl(_) => {
+                            let Some(fn_id) = self.ctx.functions.get(&name).cloned() else {
+                                panic!("Export {} is not a function", name);
+                            };
+                            if let TypeSignature::Function(func) = fn_id.ty.sig() {
+                                TypedExportType::Function(func)
+                            } else {
+                                panic!("Export {} is not a function", name);
+                            }
+                        }
+                        crate::lowering::ExportType::Struct(_) => {
+                            let Some(struct_t) = self.ctx.types.get(&name).cloned() else {
+                                panic!("Export {} is not a struct", name);
+                            };
+                            if let TypeSignature::Struct(id) = struct_t.sig() {
+                                TypedExportType::Struct(
+                                    self.ctx
+                                        .struct_types
+                                        .get(&id)
+                                        .expect("Struct not found")
+                                        .clone(),
+                                )
+                            } else {
+                                panic!("Export {} is not a struct", name);
+                            }
+                        }
+                        crate::lowering::ExportType::Module(_) => {
+                            if let Some(sub) = submodules.get(&name) {
+                                TypedExportType::Module(*sub)
+                            } else {
+                                return Err(format!("Export {} is not a module", name));
+                            }
+                        }
+                    },
+                },
+            );
+        }
+        Ok(exports)
+    }
+
+    fn name_prefix(&self, name: &str) -> String {
+        let mod_path = self.current_module_path.fmt_path_no_main();
+        if mod_path.as_str() == "main" {
+            name.to_string()
+        } else {
+            format!("{}::{}", mod_path, name)
+        }
     }
 
     fn typecheck_fn_decl(
@@ -121,7 +493,8 @@ impl<'tc> TypeChecker<'tc> {
             return_type,
             params,
             variadic,
-            has_self_param: _
+            has_self_param: _,
+            name: _
         }) = &fn_type.sig else {
             return Err(format!(
                 "Expected function type, found {:?}",
@@ -138,7 +511,7 @@ impl<'tc> TypeChecker<'tc> {
             );
         }
         Ok(TypedFunctionDeclaration {
-            name: function.name.clone(),
+            name: self.name_prefix(&function.name),
             ret_ty: return_type.clone(),
             params: params.clone(),
             fn_ty: new_type(fn_type.clone()),
@@ -158,13 +531,30 @@ impl<'tc> TypeChecker<'tc> {
             return_type,
             params,
             variadic,
-            has_self_param
+            has_self_param,
+            name: _
         }) = &fn_type.sig else {
             return Err(format!(
                 "Expected function type, found {:?}",
                 fn_type.sig
             ));
         };
+
+        /* let fn_name = if let Some(impl_ctx) = local_ctx.impl_ctx.clone() {
+            let TypeSignature::Struct(struct_id) = impl_ctx.struct_ty.sig() else {
+                return Err(format!(
+                    "Expected struct type, found {:?}",
+                    impl_ctx.struct_ty.sig()
+                ));
+            };
+            let Some(struct_ty) = self.ctx.struct_types.get(&struct_id) else {
+                return Err(format!("Could not find struct type {}", struct_id));
+            };
+
+            struct_ty.name.clone() + "." + &function.name
+        } else {
+            function.name.clone()
+        }; */
         local_ctx.return_type = return_type.clone();
         for (_, param) in params {
             local_ctx.names.insert(
@@ -216,7 +606,7 @@ impl<'tc> TypeChecker<'tc> {
         })
     }
 
-    pub(crate) fn codegen_variable_stmt(
+    pub(crate) fn typecheck_variable_stmt(
         &self,
         var_stmt: &VarDeclaration,
         local_ctx: &mut LocalTypecheckContext<'tc>,
@@ -262,7 +652,7 @@ impl<'tc> TypeChecker<'tc> {
         debug!("typechecker::typecheck_statement");
         use ast::Statement::*;
         match statement {
-            Variable(var_stmt) => self.codegen_variable_stmt(var_stmt, local_ctx),
+            Variable(var_stmt) => self.typecheck_variable_stmt(var_stmt, local_ctx),
             Expression(expr_stmt) => {
                 let expr = self.typecheck_expression(expr_stmt, local_ctx.clone())?;
                 Ok(typed_ast::TypedStatement::Expression(expr))
@@ -326,7 +716,7 @@ impl<'tc> TypeChecker<'tc> {
     fn typecheck_expression(
         &self,
         expr: &Expression,
-        local_ctx: LocalTypecheckContext<'tc>,
+        mut local_ctx: LocalTypecheckContext<'tc>,
     ) -> Result<TypedExpression<'tc>, String> {
         debug!(format!("typechecker::typecheck_expression: {:?}", expr));
         match expr {
@@ -336,6 +726,94 @@ impl<'tc> TypeChecker<'tc> {
             Expression::LogicalOp {
                 left, right, op, ..
             } => self.typecheck_logical_op(left, right, op, local_ctx),
+            Expression::ScopeResolution { scope_resolution } => {
+                let ScopeResolution {
+                    object,
+                    member,
+                    span,
+                } = scope_resolution;
+                debugln!();
+                let mut object = object.as_ref();
+                let mut path = Vec::new();
+                while let Expression::ScopeResolution { scope_resolution } = object {
+                    let ScopeResolution {
+                        object: new_object,
+                        member,
+                        span,
+                    } = scope_resolution;
+                    if let Expression::Identifier { name, .. } = member.as_ref() {
+                        path.push(name);
+                    } else {
+                        return Err(format!("Unsupported scope resolution member"));
+                    }
+                    object = new_object.as_ref();
+                }
+                if let Expression::Identifier { name, .. } = object {
+                    path.push(name);
+                } else {
+                    return Err(format!("Unsupported scope resolution object"));
+                }
+
+                let Expression::Identifier { name: fn_name, .. } = member.as_ref() else {
+                    return Err(format!("Unsupported scope resolution member"));
+                };
+
+                let start = path.first().unwrap().clone();
+
+                // Resolve type of object
+                if let Ok(object_type) = self.ctx.get_type(start.clone()) {
+                    // It's a struct
+                    let object_sig = object_type.sig();
+
+                    let Some(struct_ty) = (match &object_sig {
+                        TypeSignature::Struct(s) => self.ctx.struct_types.get(&s),
+                        TypeSignature::Pointer(PointerType {
+                            target,
+                        }) => {
+                            match target.as_ref() {
+                                TypeSignature::Struct(s_id) => {
+                                    self.ctx.struct_types.get(&s_id)
+                                },
+                                _ => return Err(format!("Cannot access member of non-struct type {:?}", object_sig)),
+                            }
+                        }
+                        _ => return Err(format!("Cannot access member of non-struct type {:?}", object_sig)),
+                    }) else {
+                        return Err(format!("Struct type does not exist"));
+                    };
+
+                    let member_method = struct_ty.methods.get(fn_name).ok_or(format!(
+                        "Struct {} does not have a method {}",
+                        struct_ty.name, fn_name
+                    ))?;
+
+                    if member_method.has_self_param {
+                        return Err(format!(
+                            "Cannot call static method <{}> on instance of struct {}",
+                            fn_name, struct_ty.name
+                        ));
+                    }
+
+                    let member_fn_ty = member_method.fn_ty.clone();
+                    let full_name = struct_ty.name.clone() + "." + &fn_name;
+                    local_ctx
+                        .names
+                        .insert(full_name.clone(), Name { ty: member_fn_ty });
+                    let name = local_ctx.names.get(&full_name).unwrap();
+                    Ok(TypedExpression {
+                        ty: match name.ty.sig() {
+                            TypeSignature::Function(FunctionType { return_type, .. }) => {
+                                return_type
+                            }
+                            _ => return Err(format!("{:?} is not a function", name.ty.sig())),
+                        },
+                        expr: TypedExpressionData::Identifier { name: full_name },
+                    })
+                } else {
+                    // It's a module
+                    todo!()
+                }
+            }
             Expression::UnaryOp { expr, op, .. } => self.typecheck_unary_op(expr, op, local_ctx),
             Expression::Identifier { name, .. } => {
                 let var = local_ctx
@@ -504,13 +982,7 @@ impl<'tc> TypeChecker<'tc> {
                             &var_assign.right,
                             local_ctx.expect_result(Some(ty.clone())),
                         )?;
-                        /* if right.ty != Some(ty.clone()) {
-                            return Err(format!(
-                                "Invalid assignment: Expected type {:?}, found {:?} in assignment",
-                                ty.clone(),
-                                right.ty
-                            ));
-                        } */
+
                         Ok(TypedExpression {
                             ty: Some(ty.clone()),
                             expr: TypedExpressionData::VarAssignment {
@@ -683,12 +1155,18 @@ impl<'tc> TypeChecker<'tc> {
         }
     }
 
+    fn get_next_struct_id(&mut self) -> usize {
+        let id = self.next_struct_id;
+        self.next_struct_id += 1;
+        id
+    }
+
     fn typecheck_struct_decl(
         &mut self,
         structure: &StructDeclaration,
     ) -> Result<TypedStructDeclaration<'tc>, String> {
         debug!("typechecker::typecheck_struct_decl");
-        let id = self.ctx.get_next_struct_id();
+        let id = self.get_next_struct_id();
         self.ctx.add_type(
             structure.name.clone(),
             new_type(Type::new(TypeSignature::Struct(id))),
@@ -719,9 +1197,7 @@ impl<'tc> TypeChecker<'tc> {
         let Ok(type_ref) = self.ctx.get_type(structure.name.clone()) else {
             return Err("".into())
         };
-        *type_ref.borrow_mut() = Type::new(TypeSignature::Struct(id));
-
-        self.ctx.structs.insert(id, struct_type.clone());
+        //*type_ref.borrow_mut() = Type::new(TypeSignature::Struct(id));
 
         for method in &structure.methods {
             // function def
@@ -730,7 +1206,8 @@ impl<'tc> TypeChecker<'tc> {
             struct_type.methods.insert(method.name.clone(), func);
         }
 
-        self.ctx.structs.insert(id, struct_type.clone());
+        self.ctx.struct_types.insert(id, struct_type.clone());
+        //self.ctx.struct_types.insert(id, struct_type.clone());
 
         Ok(TypedStructDeclaration {
             name: structure.name.clone(),
@@ -776,7 +1253,7 @@ impl<'tc> TypeChecker<'tc> {
                     ));
                 }
 
-                let bool = self.ctx.primitives.get("bool").cloned();
+                let bool = self.ctx.types.get("bool").cloned();
                 bool
             }
             And | Or => {
@@ -846,6 +1323,7 @@ impl<'tc> TypeChecker<'tc> {
                 params,
                 variadic: function.variadic,
                 has_self_param: false,
+                name: function.name.clone(),
             }),
         })
     }
@@ -881,6 +1359,7 @@ impl<'tc> TypeChecker<'tc> {
                 params,
                 variadic: function.variadic,
                 has_self_param,
+                name: function.name.clone(),
             }),
         })
     }
@@ -902,6 +1381,7 @@ impl<'tc> TypeChecker<'tc> {
                 None,
             ),
             Expression::MemberAccess { member_access } => {
+                debugln!();
                 let object = self.typecheck_expression(&member_access.object, local_ctx.clone())?;
 
                 let Some(object_type) = &object.ty else {
@@ -910,13 +1390,13 @@ impl<'tc> TypeChecker<'tc> {
                 let object_sig = object_type.sig();
 
                 let Some(struct_ty) = (match &object_sig {
-                    TypeSignature::Struct(s) => self.ctx.structs.get(&s),
+                    TypeSignature::Struct(s) => self.ctx.struct_types.get(&s),
                     TypeSignature::Pointer(PointerType {
                         target,
                     }) => {
                         match target.as_ref() {
                             TypeSignature::Struct(s_id) => {
-                                self.ctx.structs.get(&s_id)
+                                self.ctx.struct_types.get(&s_id)
                             },
                             _ => return Err(format!("Cannot access member of non-struct type {:?}", object_sig)),
                         }
@@ -942,6 +1422,84 @@ impl<'tc> TypeChecker<'tc> {
                     .insert(full_name.clone(), Name { ty: member_fn_ty });
                 let name = local_ctx.names.get(&full_name).unwrap();
                 (name, full_name, Some(object))
+            }
+            Expression::ScopeResolution { scope_resolution } => {
+                let ScopeResolution {
+                    object,
+                    member,
+                    span,
+                } = scope_resolution;
+                debugln!();
+                let mut object = *object;
+                let mut path = Vec::new();
+                while let Expression::ScopeResolution { scope_resolution } = object {
+                    let ScopeResolution {
+                        object: new_object,
+                        member,
+                        span,
+                    } = scope_resolution;
+                    if let Expression::Identifier { name, .. } = *member {
+                        path.push(name);
+                    } else {
+                        return Err(format!("Unsupported scope resolution member"));
+                    }
+                    object = *new_object;
+                }
+                if let Expression::Identifier { name, .. } = object {
+                    path.push(name);
+                } else {
+                    return Err(format!("Unsupported scope resolution object"));
+                }
+
+                let Expression::Identifier { name: fn_name, .. } = *member else {
+                    return Err(format!("Unsupported scope resolution member"));
+                };
+
+                let first = path.first().unwrap();
+                let rest = if path.len() > 2 {
+                    Some(&path[1..path.len() - 1])
+                } else {
+                    None
+                };
+
+                // Resolve type of object
+                if let Ok(object_type) = self.ctx.get_type(first.clone()) {
+                    // It's a struct
+                    let object_sig = object_type.sig();
+
+                    let Some(struct_ty) = (match &object_sig {
+                        TypeSignature::Struct(s) => self.ctx.struct_types.get(&s),
+                        TypeSignature::Pointer(PointerType {
+                            target,
+                        }) => {
+                            match target.as_ref() {
+                                TypeSignature::Struct(s_id) => {
+                                    self.ctx.struct_types.get(&s_id)
+                                },
+                                _ => return Err(format!("Cannot access member of non-struct type {:?}", object_sig)),
+                            }
+                        }
+                        _ => return Err(format!("Cannot access member of non-struct type {:?}", object_sig)),
+                    }) else {
+                        return Err(format!("Struct type does not exist"));
+                    };
+
+                    let member_method = struct_ty.methods.get(&fn_name).ok_or(format!(
+                        "Struct {} does not have a method {}",
+                        struct_ty.name, fn_name
+                    ))?;
+
+                    let member_fn_ty = member_method.fn_ty.clone();
+                    let full_name = struct_ty.name.clone() + "." + &fn_name;
+                    local_ctx
+                        .names
+                        .insert(full_name.clone(), Name { ty: member_fn_ty });
+                    let name = local_ctx.names.get(&full_name).unwrap();
+                    (name, full_name, None)
+                } else {
+                    // It's a module
+                    todo!()
+                }
             }
             _ => return Err(format!("Unsupported callee type {:?}", fn_call.callee)),
         };
@@ -1018,7 +1576,7 @@ impl<'tc> TypeChecker<'tc> {
         debug!("typechcker::typecheck_logical_op");
         let left_type = self.typecheck_expression(left, local_ctx.clone())?;
         let right_type = self.typecheck_expression(right, local_ctx.clone())?;
-        if left_type != right_type {
+        if left_type.ty != right_type.ty {
             return Err(format!(
                 "Logical op: Cannot perform operation {} on {:?} and {:?}",
                 op, left_type, right_type
@@ -1076,7 +1634,7 @@ impl<'tc> TypeChecker<'tc> {
         let struct_sig = struct_type.sig();
 
         let decl_fields = match &struct_sig {
-            TypeSignature::Struct(id) => match self.ctx.structs.get(id) {
+            TypeSignature::Struct(id) => match self.ctx.struct_types.get(id) {
                 Some(s) => s.fields.clone(),
                 None => return Err(format!("Struct {} is not defined", struct_name)),
             },
@@ -1155,9 +1713,10 @@ impl<'tc> TypeChecker<'tc> {
         let sig = ty.sig();
 
         if let TypeSignature::Struct(id) = sig {
+            debugln!();
             let structure = self
                 .ctx
-                .structs
+                .struct_types
                 .get(&id)
                 .ok_or(format!("Struct {} is not defined", id))?;
             let mut struct_ctx = LocalTypecheckContext {
@@ -1209,9 +1768,10 @@ impl<'tc> TypeChecker<'tc> {
                     impl_ctx: None,
                 };
 
+                debugln!();
                 let s = self
                     .ctx
-                    .structs
+                    .struct_types
                     .get(id)
                     .ok_or(format!("Struct {} is not defined", id))?;
 

@@ -1,12 +1,15 @@
 // Author: Will Hopkins
 
-use std::fs;
+use std::{borrow::Borrow, fs, path::PathBuf};
 
-use crate::{codegen::generator::CodeGenerator, tokenizer::Span};
+use crate::tokenizer::Span;
+
+use self::codegen::generator::CodeGenerator;
 
 mod ast;
 mod cli;
 mod codegen;
+mod lowering;
 mod parser;
 mod tokenizer;
 mod typechecker;
@@ -33,12 +36,13 @@ macro_rules! debugln {
     };
 }
 
-// TODO: Struct member functions
-// TODO: Modules and imports
+// TODO: Static struct member functions (::new(), etc.)
+// TODO: Primitive member functions
+// TODO: Modules and imports - In progress
 // TODO: Arrays
 // TODO: Traits
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn run<'a>() -> Result<(), Box<dyn std::error::Error>> {
     let args = cli::run()?;
 
     if args.debug {
@@ -62,19 +66,49 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let module = parser::parse(tokens, source.to_string(), "main".into())?;
 
     if args.ast_print {
-        println!("{:#?}", module);
+        /* println!("{:#?}", module.borrow_mut().clone()); */
+        /* println!(
+            "lower: {:#?}",
+            module_res::exports::lower(module.clone(), None)
+                .borrow_mut()
+                .clone()
+        ) */
     }
 
-    let mut tc = typechecker::TypeChecker::new();
-    let checked = tc.typecheck_module(module)?;
+    let mut intermediate = lowering::IntermediateProgram::new();
+    let lowered = intermediate.lower(module, None)?;
+    //let combined = intermediate.combine_modules()?;
+
+    if args.ast_print {
+        if args.json_ast {
+            /* for module in &intermediate.modules {
+                println!("{}", serde_json::to_string_pretty(module)?);
+            } */
+        } else {
+            println!("{:#?}", lowered);
+        };
+    }
+
+    let mut tc = typechecker::TypeChecker::new(intermediate);
+    let checked = tc.typecheck()?;
 
     if args.typed_ast_print {
-        println!("{:#?}", checked.module);
+        if args.json_ast {
+            let json = serde_json::to_string_pretty(&checked.modules)?;
+            println!("{}", json);
+            if let Some(ast_path) = args.write_ast_to {
+                let ast_path = PathBuf::from(ast_path);
+                std::fs::write(ast_path, json)?;
+            }
+        } else {
+            println!("{:#?}", checked);
+        }
     }
 
     let llvm_ctx = inkwell::context::Context::create();
-    let generator = CodeGenerator::new(&checked, &llvm_ctx);
-    let generated_mod = generator.codegen_module()?;
+    let mut generator = CodeGenerator::new(checked.clone(), &llvm_ctx);
+    let generated_mod = generator.codegen()?;
+    //let generated_mod = generator.codegen_module(checked)?;
 
     if args.ir_print {
         println!("{}", generated_mod.print_to_string().to_string());
@@ -113,6 +147,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             jit.run_function(main, &[]);
         }
     }
+    Ok(())
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    run()?;
 
     Ok(())
 }

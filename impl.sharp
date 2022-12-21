@@ -1,3 +1,4 @@
+use self::bingles::Test3;
 
 fn printf(str format, ...) -> i32;
 fn malloc(i64 size) -> i8*;
@@ -6,18 +7,6 @@ fn free(i8* ptr);
 struct Test {
     i32 a,
     i32 b,
-}
-
-struct Test2 {
-    Test a,
-    i32 b,
-}
-
-impl Test2 {
-    fn set_a(self, i32 a) {
-        *self.a.a = a;
-        return;
-    }
 }
 
 impl Test {
@@ -34,24 +23,48 @@ impl Test {
     }
 }
 
+
+struct Test2 {
+    Test3 a,
+    Test b,
+}
+
+impl Test2 {
+    fn set_a(self, Test3 a) {
+        *self.a.a = a;
+        return;
+    }
+}
+
 fn main() -> i32 {
     let Test2 t = Test2 {
-        a: if 1 == 1 {
-            <- Test {
-                a: 5,
-                b: 0,
-            };
-        } else {
-            <- Test {
-                a: 0,
-                b: 0,
-            };
+        a: Test3 {
+            a: 0,
+            b: 0,
         },
-        b: 0,
+        b: Test {
+            a: 9,
+            b: 0,
+        },
     };
     printf("t.a.a: %d\n", t.a.a);
-    t.set_a(10);
+    printf("t.b.a: %d\n", t.b.a);
+    t.set_a(Test3 {
+        a: 10,
+        b: 0,
+    });
+
+    t.b.set_a(25);
+    
     
     printf("t.a.a: %d\n", t.a.a);
+    printf("t.b.a: %d\n", t.b.a);
     return 0;
+}
+
+mod bingles {
+    struct Test3 {
+        i32 a,
+        i32 b,
+    }
 }

@@ -1,9 +1,10 @@
 // Author: Will Hopkins
 
-use std::{collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use inkwell::{
     basic_block::BasicBlock,
+    module::Linkage,
     types::{AnyTypeEnum, BasicMetadataTypeEnum, BasicType, BasicTypeEnum, PointerType, VoidType},
     values::{FunctionValue, PointerValue},
     AddressSpace,
@@ -13,23 +14,47 @@ use crate::{
     debug, debugln,
     typechecker::{
         self,
-        context::{TypeId, TypeSig},
+        context::{StructId, TypeSig},
         type_sig::{self, FunctionType, PrimitiveType, StructType, TypeSignature},
+        typed_ast::TypedModule,
+        TypeCheckerOutput,
     },
 };
+
+pub trait GetOrAddFunction<'a> {
+    fn get_or_add_function(
+        &self,
+        name: &str,
+        ty: inkwell::types::FunctionType<'a>,
+    ) -> FunctionValue;
+}
+
+impl<'a> GetOrAddFunction<'a> for inkwell::module::Module<'a> {
+    fn get_or_add_function(
+        &self,
+        name: &str,
+        ty: inkwell::types::FunctionType<'a>,
+    ) -> FunctionValue {
+        if let Some(f) = self.get_function(name) {
+            return f;
+        }
+
+        self.add_function(name, ty, Some(Linkage::External))
+    }
+}
 
 pub struct CodegenContext<'ctx> {
     pub llvm_ctx: &'ctx inkwell::context::Context,
     pub llvm_module: inkwell::module::Module<'ctx>,
     pub ir_builder: inkwell::builder::Builder<'ctx>,
-    pub tc_mod: &'ctx typechecker::TypeCheckModule<'ctx>,
+    pub tc_mod: TypeCheckerOutput<'ctx>,
 }
 
 #[derive(Debug, Clone)]
 pub struct LocalCodegenContext<'ctx> {
     pub names: HashMap<String, CodegenName<'ctx>>,
     pub types: HashMap<TypeSignature<'ctx>, Rc<CodegenType<'ctx>>>,
-    pub structs: HashMap<TypeId, StructType<'ctx>>,
+    pub structs: HashMap<StructId, StructType<'ctx>>,
     pub return_type: Option<TypeSignature<'ctx>>,
     pub result_type: Option<TypeSignature<'ctx>>,
     pub current_fn: Option<FunctionValue<'ctx>>,
@@ -51,11 +76,47 @@ pub struct ImplCtx<'ctx> {
 }
 
 impl<'ctx> LocalCodegenContext<'ctx> {
-    pub fn with_self(&self, impl_ctx: Option<ImplCtx<'ctx>>) -> Self {
-        Self {
+    pub fn with_impl(
+        &self,
+        impl_ctx: Option<ImplCtx<'ctx>>,
+        codegen_ctx: &CodegenContext<'ctx>,
+    ) -> Result<Self, String> {
+        let mut ctx = Self {
             impl_ctx,
             ..self.clone()
+        };
+
+        let Some(impl_ctx) = &ctx.impl_ctx else  {
+            return Err("impl_ctx is None".into());
+        };
+        let TypeSignature::Struct(id) = impl_ctx.self_type else {
+            panic!("impl_ctx.self_type is not a struct");
+        };
+        let Some(struct_ty) = ctx.structs.get(&id) else {
+            panic!("impl_ctx.self_type is not a struct");
+        };
+        let struct_name = impl_ctx.self_name.clone();
+        for (name, method) in &struct_ty.methods.clone() {
+            let TypeSignature::Function(f) = method.fn_ty.sig() else {
+                panic!("impl_ctx.self_type is not a struct");
+            };
+
+            let full_name = format!("{}.{}", struct_name, name);
+
+            ctx.add_name(CodegenName {
+                name: full_name.clone(),
+                ty: Rc::new(CodegenType::new(
+                    full_name.clone(),
+                    method.fn_ty.sig(),
+                    Some(codegen_ctx.function_to_llvm_ty(&f, &self.structs).unwrap()),
+                )),
+                alloc: None,
+                is_arg: false,
+                arg_idx: None,
+            });
         }
+
+        Ok(ctx)
     }
 
     pub fn self_arg(&self, has: bool) -> Self {
@@ -116,7 +177,7 @@ impl<'ctx> CodegenContext<'ctx> {
         llvm_ctx: &'ctx inkwell::context::Context,
         module: inkwell::module::Module<'ctx>,
         builder: inkwell::builder::Builder<'ctx>,
-        tc_mod: &'ctx typechecker::TypeCheckModule<'ctx>,
+        tc_mod: TypeCheckerOutput<'ctx>,
     ) -> Self {
         Self {
             llvm_ctx,
@@ -209,7 +270,7 @@ impl<'ctx> CodegenContext<'ctx> {
     pub fn function_to_llvm_ty(
         &self,
         f: &FunctionType<'ctx>,
-        structs: &HashMap<TypeId, StructType<'ctx>>,
+        structs: &HashMap<StructId, StructType<'ctx>>,
     ) -> Result<CodegenLLVMType<'ctx>, String> {
         debug!("function_to_llvm_ty");
         let mut param_types: Vec<(u32, BasicMetadataTypeEnum)> = Vec::new();
@@ -264,7 +325,7 @@ impl<'ctx> CodegenContext<'ctx> {
     pub fn struct_to_llvm_ty(
         &self,
         s: &StructType<'ctx>,
-        structs: &HashMap<TypeId, StructType<'ctx>>,
+        structs: &HashMap<StructId, StructType<'ctx>>,
     ) -> Result<BasicTypeEnum<'ctx>, String> {
         let opaque_struct_t = if let Some(t) = self.llvm_ctx.get_struct_type(s.name.as_str()) {
             debug!(format!("Struct {:?}: already defined", t.get_name()));
@@ -298,7 +359,7 @@ impl<'ctx> CodegenContext<'ctx> {
                         let Some(s) = structs.get(&sid) else {
                             return Err(format!("struct_to_llvm_ty: Struct not found: {:?}", sid))
                         };
-                        debugln!();
+
                         self.struct_to_llvm_ty(s, structs)?
                     }
                 }
@@ -318,7 +379,6 @@ impl<'ctx> CodegenContext<'ctx> {
                             if let Some(t) = self.llvm_ctx.get_struct_type(s.name.as_str()) {
                                 base_llvm = t;
                             } else {
-                                debugln!();
                                 base_llvm = self.struct_to_llvm_ty(s, structs)?.into_struct_type();
                             }
                         }
@@ -358,7 +418,7 @@ impl<'ctx> CodegenContext<'ctx> {
     pub fn to_llvm_ty(
         &self,
         ty: &TypeSignature<'ctx>,
-        structs: &HashMap<TypeId, StructType<'ctx>>,
+        structs: &HashMap<StructId, StructType<'ctx>>,
     ) -> Result<CodegenLLVMType<'ctx>, String> {
         debug!(format!("codegen::context::to_llvm_ty: {:?}", ty));
         use TypeSignature::*;
@@ -371,7 +431,7 @@ impl<'ctx> CodegenContext<'ctx> {
                 let Some(struct_type) = structs.get(id) else {
                     return Err(format!("to_llvm_ty: Struct not found: {:?}", id))
                 };
-                debugln!();
+
                 let res = self.struct_to_llvm_ty(&struct_type, structs)?;
                 Ok(res.into())
             }
@@ -384,7 +444,7 @@ impl<'ctx> CodegenContext<'ctx> {
     pub fn ptr_to_llvm_ty(
         &self,
         ptr_type: &type_sig::PointerType<'ctx>,
-        structs: &HashMap<TypeId, StructType<'ctx>>,
+        structs: &HashMap<StructId, StructType<'ctx>>,
     ) -> Result<CodegenLLVMType<'ctx>, String> {
         debug!(format!("codegen::context::ptr_to_llvm_ty: {:?}", ptr_type));
         match ptr_type.target.as_ref() {
@@ -431,7 +491,7 @@ impl<'ctx> CodegenContext<'ctx> {
                 let Some(struct_ptr) = structs.get(id) else {
                     return Err(format!("ptr_to_llvm_ty: Struct not found: {:?}", id))
                 };
-                debugln!();
+
                 let struct_type = self.struct_to_llvm_ty(&struct_ptr, structs)?;
                 Ok(struct_type.ptr_type(AddressSpace::Generic).into())
             }

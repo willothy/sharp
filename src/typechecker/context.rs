@@ -1,17 +1,22 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
+use serde::{Deserialize, Serialize};
+
+use crate::{ast::ModulePath, lowering::ModuleId};
+
 use super::type_sig::{Name, PointerType, PrimitiveType, StructType, Type, TypeSignature};
+use serde_with::serde_as;
+pub type StructId = usize;
 
-pub type TypeId = usize;
-
-#[derive(Debug, Clone)]
-pub struct TypeCheckContext<'ctx> {
-    pub names: HashMap<String, Name<'ctx>>,
+#[serde_as]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModuleTypeCheckCtx<'ctx> {
+    #[serde_as(as = "Vec<(_, _)>")]
+    pub functions: HashMap<String, Name<'ctx>>,
+    #[serde_as(as = "Vec<(_, _)>")]
     pub types: HashMap<String, TypeRef<'ctx>>,
-    pub structs: HashMap<TypeId, StructType<'ctx>>,
-    pub submodules: HashMap<String, TypeCheckContext<'ctx>>,
-    pub primitives: HashMap<String, TypeRef<'ctx>>,
-    pub last_struct_id: TypeId,
+    #[serde_as(as = "Vec<(_, _)>")]
+    pub struct_types: HashMap<StructId, StructType<'ctx>>,
 }
 
 #[derive(Debug, Clone)]
@@ -29,10 +34,10 @@ pub struct ImplContext<'ctx> {
     //pub trait_ty: TypeRef<'ctx>,
 }
 
-impl<'ctx> From<&TypeCheckContext<'ctx>> for LocalTypecheckContext<'ctx> {
-    fn from(ctx: &TypeCheckContext<'ctx>) -> Self {
+impl<'ctx> From<&ModuleTypeCheckCtx<'ctx>> for LocalTypecheckContext<'ctx> {
+    fn from(ctx: &ModuleTypeCheckCtx<'ctx>) -> Self {
         Self {
-            names: ctx.names.clone(),
+            names: ctx.functions.clone(),
             return_type: None,
             result_type: None,
             in_loop: false,
@@ -83,59 +88,65 @@ impl<'type_reg> TypeSig<'type_reg> for TypeRef<'type_reg> {
     }
 }
 
-impl<'ctx> TypeCheckContext<'ctx> {
+impl<'ctx> ModuleTypeCheckCtx<'ctx> {
     pub fn new() -> Self {
         let mut ctx = Self {
-            names: HashMap::new(),
+            functions: HashMap::new(),
             types: HashMap::new(),
-            structs: HashMap::new(),
-            submodules: HashMap::new(),
-            primitives: HashMap::new(),
-            last_struct_id: 0,
+            struct_types: HashMap::new(),
         };
         ctx.load_primitives();
         ctx
     }
 
+    pub fn with_types(other: &Self) -> Self {
+        let mut ctx = Self {
+            functions: HashMap::new(),
+            types: other.types.clone(),
+            struct_types: other.struct_types.clone(),
+        };
+        ctx
+    }
+
     fn load_primitives(&mut self) {
         // Add primitive types
-        self.primitives.insert(
+        self.types.insert(
             "i8".into(),
             new_type(Type::new(TypeSignature::Primitive(PrimitiveType::I8))),
         );
-        self.primitives.insert(
+        self.types.insert(
             "i16".into(),
             new_type(Type::new(TypeSignature::Primitive(PrimitiveType::I16))),
         );
-        self.primitives.insert(
+        self.types.insert(
             "i32".into(),
             new_type(Type::new(TypeSignature::Primitive(PrimitiveType::I32))),
         );
-        self.primitives.insert(
+        self.types.insert(
             "i64".into(),
             new_type(Type::new(TypeSignature::Primitive(PrimitiveType::I64))),
         );
-        self.primitives.insert(
+        self.types.insert(
             "f32".into(),
             new_type(Type::new(TypeSignature::Primitive(PrimitiveType::F32))),
         );
-        self.primitives.insert(
+        self.types.insert(
             "f64".into(),
             new_type(Type::new(TypeSignature::Primitive(PrimitiveType::F64))),
         );
-        self.primitives.insert(
+        self.types.insert(
             "bool".into(),
             new_type(Type::new(TypeSignature::Primitive(PrimitiveType::Bool))),
         );
-        self.primitives.insert(
+        self.types.insert(
             "char".into(),
             new_type(Type::new(TypeSignature::Primitive(PrimitiveType::Char))),
         );
-        self.primitives.insert(
+        self.types.insert(
             "str".into(),
             new_type(Type::new(TypeSignature::Primitive(PrimitiveType::Str))),
         );
-        self.primitives
+        self.types
             .insert("void".into(), new_type(Type::new(TypeSignature::Void)));
     }
 
@@ -152,9 +163,6 @@ impl<'ctx> TypeCheckContext<'ctx> {
         let base_name = type_name[ptr_dim..].to_string();
 
         if ptr_dim == 0 {
-            if let Some(t) = self.primitives.get(&base_name) {
-                return Ok(t.clone());
-            }
             let Some(type_) = self.types.get(&base_name.clone()) else {
                 return Err(format!(
                     "{} is not a valid type {}:{}",
@@ -188,11 +196,6 @@ impl<'ctx> TypeCheckContext<'ctx> {
         }
         self.types.insert(type_name, type_);
         Ok(())
-    }
-
-    pub(crate) fn get_next_struct_id(&mut self) -> usize {
-        self.last_struct_id += 1;
-        self.last_struct_id
     }
 }
 

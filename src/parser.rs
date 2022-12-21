@@ -1,9 +1,11 @@
+use std::{cell::RefCell, rc::Rc};
+
 use crate::{
     ast::{
         Block, Declaration, Expression, FunctionCall, FunctionDeclaration, FunctionDefinition,
-        FunctionParameter, IfExpression, LoopStatement, MemberAccess, Module, NodeSpan,
-        ResultStatement, ReturnStatement, Statement, StructDeclaration, StructField,
-        StructInitializer, StructInitializerField, VarAssignment, VarDeclaration,
+        FunctionParameter, IfExpression, LoopStatement, MemberAccess, Module, ModulePath, NodeSpan,
+        ResultStatement, ReturnStatement, ScopeResolution, Statement, StructDeclaration,
+        StructField, StructInitializer, StructInitializerField, Use, VarAssignment, VarDeclaration,
     },
     debug,
     tokenizer::{
@@ -16,9 +18,9 @@ pub fn parse<'parse>(
     tokens: Vec<Token>,
     source: String,
     mod_name: String,
-) -> Result<Module, String> {
+) -> Result<Rc<RefCell<Module>>, String> {
     let mut parser = Parser::new(tokens, source);
-    let module = parser.module(mod_name)?;
+    let module = parser.module(mod_name, None)?;
     Ok(module)
 }
 
@@ -27,7 +29,6 @@ struct Parser<'parser> {
     tokens: Vec<Token<'parser>>,
     current: usize,
     lookahead: usize,
-    lifetime: std::marker::PhantomData<&'parser ()>,
     impl_ctx: Option<String>,
 }
 
@@ -37,7 +38,6 @@ impl<'parser> Parser<'parser> {
             tokens,
             current: 0,
             lookahead: 1,
-            lifetime: std::marker::PhantomData,
             source,
             impl_ctx: None,
         }
@@ -151,30 +151,137 @@ impl<'parser> Parser<'parser> {
         }
     }
 
-    pub fn module(&mut self, mod_name: String) -> Result<Module, String> {
+    pub(crate) fn use_decl(&mut self, current_mod: Rc<RefCell<Module>>) -> Result<Use, String> {
+        let span = self.span_start()?;
+        self.eat(TokenKind::Keyword(Keyword::Use))?;
+        let path = self.path()?;
+        let path = self.canonicalize_path(path, current_mod)?;
+        self.eat(TokenKind::Symbol(Symbol::Semicolon))?;
+        Ok(Use {
+            item_path: path,
+            span: self.span_end(span)?,
+        })
+    }
+
+    // Turn relative module path into absolute
+    // For example,     main::foo::bar -> main::foo::bar
+    // In mod foo::baz: super::bar -> main::foo::bar
+    // In mod foo::baz  self::bar -> main::foo::baz::bar
+    // "main" is a keyword for the root module
+    fn canonicalize_path(
+        &self,
+        path: ModulePath,
+        current_mod: Rc<RefCell<Module>>,
+    ) -> Result<ModulePath, String> {
+        let mut path = path;
+        let mut current_path = current_mod.borrow().path.clone();
+        let mut i = 0;
+        while i < path.len() {
+            match path[i].as_str() {
+                "super" => {
+                    if current_path.len() == 0 {
+                        return Err(format!(
+                            "Cannot use super in the root module {}",
+                            self.debug_position()
+                        ));
+                    }
+                    current_path.pop();
+                    path.remove(i);
+                }
+                "self" => {
+                    path.remove(i);
+                }
+                "main" => {
+                    if i != 0 {
+                        return Err(format!(
+                            "Parser: main can only be used as the first identifier in a path {}",
+                            self.debug_position()
+                        ));
+                    }
+                    i += 1;
+                }
+                _ => {
+                    i += 1;
+                }
+            }
+        }
+        current_path.append(&mut path);
+        Ok(current_path)
+    }
+
+    pub fn path(&mut self) -> Result<ModulePath, String> {
+        let mut path = Vec::new();
+        loop {
+            if let Some(TokenKind::Identifier(ident)) = self.current() {
+                path.push(ident.clone());
+                self.advance();
+            } else {
+                return Err(format!(
+                    "Expected identifier, got {:?} {}",
+                    self.current(),
+                    self.debug_position()
+                ));
+            }
+            if let Some(TokenKind::Symbol(Symbol::DoubleColon)) = self.current() {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        Ok(path)
+    }
+
+    pub fn module(
+        &mut self,
+        mod_name: String,
+        parent: Option<Rc<RefCell<Module>>>,
+    ) -> Result<Rc<RefCell<Module>>, String> {
         debug!("parser::Parser::module");
-        let mut body = Vec::new();
-        let mut submodules = Vec::new();
+
+        let module = Rc::new(RefCell::new(Module {
+            fn_defs: Vec::new(),
+            fn_decls: Vec::new(),
+            structs: Vec::new(),
+            submodules: Vec::new(),
+            dependencies: Vec::new(),
+            name: mod_name.clone(),
+            parent: parent.clone(),
+            path: {
+                let mut path = Vec::from([mod_name]);
+                let mut parent = parent;
+                while let Some(parent_mod) = parent {
+                    path.push(parent_mod.borrow().name.clone());
+                    parent = parent_mod.borrow().parent.clone();
+                }
+                path.reverse();
+                path
+            },
+        }));
 
         loop {
+            let mod_ptr = Rc::clone(&module);
             match self.current() {
                 Some(TokenKind::Keyword(Keyword::Function)) => {
                     let fn_sig = self.function_sig()?;
                     if let Some(TokenKind::Symbol(Symbol::Semicolon)) = self.current() {
                         let func_decl: FunctionDeclaration = self.function_decl(fn_sig)?;
-                        body.push(Declaration::FunctionDecl(func_decl));
+                        mod_ptr.borrow_mut().fn_decls.push(func_decl);
                     } else {
                         let func = self.function_def(fn_sig)?;
-                        body.push(Declaration::FunctionDef(func));
+                        mod_ptr.borrow_mut().fn_defs.push(func);
                     }
+                }
+                Some(TokenKind::Keyword(Keyword::Use)) => {
+                    let use_decl = self.use_decl(module.clone())?;
+                    mod_ptr.borrow_mut().dependencies.push(use_decl);
                 }
                 Some(TokenKind::Keyword(Keyword::Struct)) => {
                     let structure = self.struct_decl()?;
-                    body.push(Declaration::Struct(structure));
+                    mod_ptr.borrow_mut().structs.push(structure);
                 }
                 Some(TokenKind::Keyword(Keyword::Module)) => {
-                    let module = self.module_decl()?;
-                    submodules.push(module);
+                    let module = self.module_decl(module.clone())?;
+                    mod_ptr.borrow_mut().submodules.push(module);
                 }
                 Some(TokenKind::Keyword(Keyword::Impl)) => {
                     self.eat(TokenKind::Keyword(Keyword::Impl))?;
@@ -188,12 +295,9 @@ impl<'parser> Parser<'parser> {
                         ));
                     };
 
-                    let Some(Declaration::Struct(struct_decl)) = body.iter_mut().find(|decl| {
-                        if let Declaration::Struct(struct_decl) = decl {
-                            struct_decl.name == type_name
-                        } else {
-                            false
-                        }
+                    let mut mod_ptr = mod_ptr.borrow_mut();
+                    let Some(struct_decl) = mod_ptr.structs.iter_mut().find(|decl| {
+                        decl.name == type_name
                     }) else {
                         return Err(format!(
                             "No struct with name {} found at {}",
@@ -251,15 +355,13 @@ impl<'parser> Parser<'parser> {
             }
         }
 
-        Ok(Module {
-            body,
-            submodules,
-            requirements: Vec::new(),
-            name: mod_name,
-        })
+        Ok(module)
     }
 
-    pub fn module_decl(&mut self) -> Result<Module, String> {
+    pub fn module_decl(
+        &mut self,
+        parent: Rc<RefCell<Module>>,
+    ) -> Result<Rc<RefCell<Module>>, String> {
         debug!("parser::Parser::module_decl");
         self.eat(TokenKind::Keyword(Keyword::Module))?;
         let name = if let Some(TokenKind::Identifier(name)) = self.advance() {
@@ -273,7 +375,7 @@ impl<'parser> Parser<'parser> {
         };
 
         self.eat(TokenKind::Symbol(Symbol::OpenBrace))?;
-        let module = self.module(name)?;
+        let module = self.module(name, Some(parent))?;
         self.advance();
         Ok(module)
     }
@@ -1043,7 +1145,8 @@ impl<'parser> Parser<'parser> {
         let mut object: Expression = self.primary_expr()?;
 
         while let Some(TokenKind::Symbol(Symbol::Dot))
-        | Some(TokenKind::Symbol(Symbol::OpenBracket)) = self.current()
+        | Some(TokenKind::Symbol(Symbol::OpenBracket))
+        | Some(TokenKind::Symbol(Symbol::DoubleColon)) = self.current()
         {
             let span = self.span_start()?;
             if let Some(TokenKind::Symbol(Symbol::Dot)) = self.current() {
@@ -1054,6 +1157,16 @@ impl<'parser> Parser<'parser> {
                         object: Box::from(object),
                         member: Box::from(prop),
                         computed: false,
+                        span: self.span_end(span)?,
+                    },
+                };
+            } else if let Some(TokenKind::Symbol(Symbol::DoubleColon)) = self.current() {
+                self.eat(TokenKind::Symbol(Symbol::DoubleColon))?;
+                let prop = self.identifier()?;
+                object = Expression::ScopeResolution {
+                    scope_resolution: ScopeResolution {
+                        object: Box::from(object),
+                        member: Box::from(prop),
                         span: self.span_end(span)?,
                     },
                 };

@@ -18,6 +18,7 @@ use nom::{
     Err, IResult,
 };
 use nom_locate::{position, LocatedSpan};
+use serde::{Deserialize, Serialize};
 
 pub type Span<'a> = LocatedSpan<&'a str>;
 
@@ -39,7 +40,7 @@ impl<'t> PartialEq<TokenKind> for Token<'t> {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct TokenPosition {
     pub line: usize,
     pub column: usize,
@@ -86,7 +87,7 @@ pub enum TokenKind {
     Comment,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum Literal {
     Str(String, TokenPosition),
     Int(i64, TokenPosition),
@@ -127,7 +128,7 @@ pub enum Keyword {
     SizeOf,
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub enum Operator {
     Assign(AssignmentOperator),
     As,
@@ -254,7 +255,7 @@ impl std::fmt::Display for Operator {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub enum AssignmentOperator {
     AddAssign,
     SubAssign,
@@ -273,6 +274,7 @@ pub enum Symbol {
     OpenBracket,
     CloseBracket,
     Semicolon,
+    DoubleColon,
     Colon,
     Comma,
     Dot,
@@ -423,6 +425,7 @@ fn symbol<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
         tag("["),
         tag("]"),
         tag(";"),
+        tag("::"),
         tag(":"),
         tag("..."),
         tag(","),
@@ -441,6 +444,7 @@ fn symbol<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
                 "[" => TokenKind::Symbol(Symbol::OpenBracket),
                 "]" => TokenKind::Symbol(Symbol::CloseBracket),
                 ";" => TokenKind::Symbol(Symbol::Semicolon),
+                "::" => TokenKind::Symbol(Symbol::DoubleColon),
                 ":" => TokenKind::Symbol(Symbol::Colon),
                 "," => TokenKind::Symbol(Symbol::Comma),
                 "." => TokenKind::Symbol(Symbol::Dot),

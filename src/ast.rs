@@ -1,3 +1,5 @@
+use std::{cell::RefCell, rc::Rc};
+
 use crate::tokenizer::{AssignmentOperator, Literal, TokenPosition};
 
 use super::tokenizer::Operator;
@@ -10,10 +12,14 @@ pub struct NodeSpan {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Module {
-    pub body: Vec<Declaration>,
-    pub submodules: Vec<Module>,
-    pub requirements: Vec<Module>,
+    pub fn_defs: Vec<FunctionDefinition>,
+    pub fn_decls: Vec<FunctionDeclaration>,
+    pub structs: Vec<StructDeclaration>,
+    pub submodules: Vec<Rc<RefCell<Module>>>,
+    pub dependencies: Vec<Use>,
+    pub parent: Option<Rc<RefCell<Module>>>,
     pub name: String,
+    pub path: ModulePath,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -21,9 +27,34 @@ pub enum Declaration {
     FunctionDef(FunctionDefinition),
     FunctionDecl(FunctionDeclaration),
     Struct(StructDeclaration),
-    #[allow(unused)]
-    // TODO: Implement modules
     Module(Module),
+}
+
+pub type ModulePath = Vec<String>;
+
+pub trait FmtPath {
+    fn fmt_path(&self) -> String;
+    fn fmt_path_no_main(&self) -> String;
+}
+
+impl FmtPath for ModulePath {
+    fn fmt_path(&self) -> String {
+        self.join("::")
+    }
+
+    fn fmt_path_no_main(&self) -> String {
+        let mut path = self.fmt_path();
+        if path.starts_with("main::") {
+            path = path[6..].to_string();
+        }
+        path
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Use {
+    pub item_path: ModulePath,
+    pub span: NodeSpan,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -144,6 +175,16 @@ pub enum Expression {
         type_name: String,
         span: NodeSpan,
     },
+    ScopeResolution {
+        scope_resolution: ScopeResolution,
+    },
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct ScopeResolution {
+    pub object: Box<Expression>,
+    pub member: Box<Expression>,
+    pub span: NodeSpan,
 }
 
 #[derive(Debug, PartialEq, Clone)]

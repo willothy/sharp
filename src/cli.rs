@@ -6,22 +6,26 @@ use clap::{command, Parser};
 #[command(author, version, about)]
 struct Args {
     file: PathBuf,
-    #[arg(short, long, default_value_t = String::from("out.ll"))]
+    #[arg(short='o', long, default_value_t = String::from("out.ll"))]
     output: String,
-    #[arg(short, long)]
+    #[arg(short = 'a', long)]
     ast_print: bool,
-    #[arg(short, long)]
+    #[arg(short = 't', long)]
     tokens_print: bool,
     #[arg(short = 'x', long)]
     typed_ast_print: bool,
-    #[arg(short, long)]
+    #[arg(short = 'j', long)]
+    json_ast: bool,
+    #[arg(short = 'i', long)]
     ir_print: bool,
-    #[arg(short, long)]
+    #[arg(short = 'd', long)]
     debug: bool,
-    #[arg(short, long)]
+    #[arg(short = 'e', long)]
     jit_exec: bool,
-    #[arg(short, long)]
+    #[arg(short = 'c', long)]
     compile: bool,
+    #[arg(long)]
+    write_ast_to: Option<String>,
 }
 
 impl Args {
@@ -36,6 +40,8 @@ impl Args {
             jit_exec: self.jit_exec,
             compile: self.compile,
             typed_ast_print: self.typed_ast_print,
+            json_ast: self.json_ast,
+            write_ast_to: self.write_ast_to,
         })
     }
 }
@@ -51,6 +57,8 @@ pub struct ArgsValidated {
     pub jit_exec: bool,
     pub compile: bool,
     pub typed_ast_print: bool,
+    pub json_ast: bool,
+    pub write_ast_to: Option<String>,
 }
 
 pub fn run() -> Result<ArgsValidated, Box<dyn std::error::Error>> {

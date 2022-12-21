@@ -1,11 +1,14 @@
 use std::{collections::HashMap, hash::Hash};
 
+use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
+
 use super::{
-    context::{TypeId, TypeRef},
+    context::{StructId, TypeRef},
     typed_ast::TypedFunctionDefinition,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Type<'t> {
     pub sig: TypeSignature<'t>,
 }
@@ -24,7 +27,7 @@ impl<'t> Type<'t> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PointerType<'t> {
     pub target: Box<TypeSignature<'t>>,
 }
@@ -59,10 +62,10 @@ impl<'t> PointerType<'t> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TypeSignature<'t> {
     Primitive(PrimitiveType),
-    Struct(TypeId),
+    Struct(StructId),
     Function(FunctionType<'t>),
     Pointer(PointerType<'t>),
     Void,
@@ -90,6 +93,13 @@ impl<'t> TypeSignature<'t> {
         }
     }
 
+    pub fn struct_id(&self) -> Option<StructId> {
+        match self {
+            TypeSignature::Struct(s) => Some(*s),
+            _ => None,
+        }
+    }
+
     pub fn get_base_type(&self) -> TypeSignature<'t> {
         match self {
             TypeSignature::Pointer(p) => p.target.get_base_type(),
@@ -97,7 +107,7 @@ impl<'t> TypeSignature<'t> {
         }
     }
 
-    pub fn string_repr(&self, structs: &HashMap<TypeId, StructType<'t>>) -> String {
+    pub fn string_repr(&self, structs: &HashMap<StructId, StructType<'t>>) -> String {
         match self {
             TypeSignature::Primitive(p) => match p {
                 PrimitiveType::I8 => "i8",
@@ -186,7 +196,7 @@ impl<'fn_param> Hash for TypedFunctionParameter<'fn_param> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PrimitiveType {
     I8,
     I16,
@@ -262,10 +272,13 @@ impl TryFrom<String> for PrimitiveType {
     }
 }
 
-#[derive(Debug, Clone)]
+#[serde_as]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StructType<'struct_type> {
     pub name: String,
+    #[serde_as(as = "Vec<(_, _)>")]
     pub fields: HashMap<String, TypedStructField<'struct_type>>,
+    #[serde_as(as = "Vec<(_, _)>")]
     pub methods: HashMap<String, TypedFunctionDefinition<'struct_type>>,
     pub id: usize,
 }
@@ -288,19 +301,22 @@ impl<'struct_type> PartialEq for StructType<'struct_type> {
 
 impl<'struct_type> Eq for StructType<'struct_type> {}
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TypedStructField<'field> {
     pub name: String,
     pub ty: TypeRef<'field>,
     pub idx: u32,
 }
 
-#[derive(Debug, Clone)]
+#[serde_as]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FunctionType<'fn_type> {
     pub return_type: Option<TypeRef<'fn_type>>,
+    #[serde_as(as = "Vec<(_, _)>")]
     pub params: HashMap<String, TypedFunctionParameter<'fn_type>>,
     pub variadic: bool,
     pub has_self_param: bool,
+    pub name: String,
 }
 
 impl<'fn_type> PartialEq for FunctionType<'fn_type> {
@@ -331,14 +347,14 @@ impl<'fn_type> PartialEq for FunctionType<'fn_type> {
 
 impl<'fn_type> Eq for FunctionType<'fn_type> {}
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TypedFunctionParameter<'fn_param> {
     pub name: String,
     pub ty: TypeRef<'fn_param>,
     pub idx: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Name<'name> {
     pub ty: TypeRef<'name>,
 }

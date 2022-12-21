@@ -1,21 +1,53 @@
-use std::collections::HashMap;
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use crate::tokenizer::{AssignmentOperator, Literal, Operator};
+use serde::{Deserialize, Serialize};
 
-use super::{
-    context::TypeRef,
-    type_sig::{TypedFunctionParameter, TypedStructField},
+use crate::{
+    ast::{Declaration, FunctionDefinition, ModulePath, StructDeclaration, Use},
+    lowering::ModuleId,
+    tokenizer::{AssignmentOperator, Literal, Operator},
 };
 
-#[derive(Debug, PartialEq, Clone)]
+use super::{
+    context::{ModuleTypeCheckCtx, StructId, TypeRef},
+    type_sig::{FunctionType, StructType, TypedFunctionParameter, TypedStructField},
+};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypedModule<'ast> {
-    pub body: Vec<TypedDeclaration<'ast>>,
-    //pub submodules: Vec<Module<'ast>>,
-    //pub requirements: Vec<Module<'ast>>,
+    pub fn_defs: Vec<TypedFunctionDefinition<'ast>>,
+    pub fn_decls: Vec<TypedFunctionDeclaration<'ast>>,
+    pub structs: Vec<TypedStructDeclaration<'ast>>,
+    pub submodules: HashMap<String, ModuleId>,
+    pub dependencies: Vec<TypedImport>,
+    pub parent: Option<ModuleId>,
+    pub exports: HashMap<String, TypedExport<'ast>>,
+    pub path: ModulePath,
     pub name: String,
+    pub id: ModuleId,
+    pub ctx: ModuleTypeCheckCtx<'ast>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TypedExport<'export> {
+    pub name: String,
+    pub ty: TypedExportType<'export>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TypedExportType<'export> {
+    Function(FunctionType<'export>),
+    Struct(StructType<'export>),
+    Module(ModuleId),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TypedImport {
+    pub name: String,
+    pub source_module: ModuleId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TypedDeclaration<'ast> {
     FunctionDef(TypedFunctionDefinition<'ast>),
     FunctionDecl(TypedFunctionDeclaration<'ast>),
@@ -24,7 +56,7 @@ pub enum TypedDeclaration<'ast> {
     Module(TypedModule<'ast>),
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypedFunctionDefinition<'ast> {
     pub name: String,
     pub ret_ty: Option<TypeRef<'ast>>,
@@ -35,7 +67,7 @@ pub struct TypedFunctionDefinition<'ast> {
     pub has_self_param: bool,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypedFunctionDeclaration<'ast> {
     pub name: String,
     pub ret_ty: Option<TypeRef<'ast>>,
@@ -44,7 +76,7 @@ pub struct TypedFunctionDeclaration<'ast> {
     pub variadic: bool,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypedStructDeclaration<'ast> {
     pub name: String,
     pub fields: Vec<TypedStructField<'ast>>,
@@ -53,34 +85,34 @@ pub struct TypedStructDeclaration<'ast> {
     pub id: usize,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypedStructInitializer<'ast> {
     pub struct_name: String,
     pub struct_ty: TypeRef<'ast>,
     pub fields: Vec<TypedStructInitializerField<'ast>>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypedStructInitializerField<'ast> {
     pub field_name: String,
     pub value: TypedExpression<'ast>,
     pub idx: u32,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypedFunctionCall<'ast> {
     pub callee: Box<TypedExpression<'ast>>,
     pub args: Vec<TypedExpression<'ast>>,
     pub fn_ty: TypeRef<'ast>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypedExpression<'ast> {
     pub ty: Option<TypeRef<'ast>>,
     pub expr: TypedExpressionData<'ast>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TypedExpressionData<'ast> {
     BinaryOp {
         left: Box<TypedExpression<'ast>>,
@@ -149,20 +181,20 @@ impl<'ast> TypedExpressionData<'ast> {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypedLiteral<'ast> {
     pub ty: TypeRef<'ast>,
     pub literal: Literal,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypedMemberAccess<'ast> {
     pub object: Box<TypedExpression<'ast>>,
     pub member: Box<TypedExpression<'ast>>,
     pub computed: bool,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TypedStatement<'ast> {
     Variable(TypedVarDeclaration<'ast>),
     Expression(TypedExpression<'ast>),
@@ -173,21 +205,21 @@ pub enum TypedStatement<'ast> {
     Break,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypedVarAssignment<'ast> {
     pub operator: AssignmentOperator,
     pub left: Box<TypedExpression<'ast>>,
     pub right: Box<TypedExpression<'ast>>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypedVarDeclaration<'ast> {
     pub name: String,
     pub ty: TypeRef<'ast>,
     pub initializer: Option<TypedExpression<'ast>>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypedIfExpression<'ast> {
     pub condition: Box<TypedExpression<'ast>>,
     pub body: Box<TypedExpression<'ast>>,
@@ -195,22 +227,22 @@ pub struct TypedIfExpression<'ast> {
     pub result_ty: Option<TypeRef<'ast>>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypedLoopStatement<'ast> {
     pub body: TypedBlock<'ast>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypedReturnStatement<'ast> {
     pub value: Option<TypedExpression<'ast>>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypedResultStatement<'ast> {
     pub value: TypedExpression<'ast>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypedBlock<'ast> {
     pub statements: Vec<TypedStatement<'ast>>,
     pub ty: Option<TypeRef<'ast>>,

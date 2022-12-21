@@ -1,0 +1,21 @@
+use self::bingles::three;
+
+fn main() -> i32 {
+    let Test a = Test{
+        a: 1,
+        b: 2,
+        c: three(),
+    };
+}
+
+struct Test {
+    i32 a,
+    i32 b,
+    i32 c
+}
+
+mod bingles {
+    fn three() -> i32 {
+        return 3;
+    }
+}
