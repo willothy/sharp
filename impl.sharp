@@ -1,8 +1,10 @@
 use self::bingles::Test3;
+//use self::bingles::printf;
 
-fn printf(str format, ...) -> i32;
 fn malloc(i64 size) -> i8*;
 fn free(i8* ptr);
+fn printf(str format, ...) -> i32;
+
 
 struct Test {
     i32 a,
@@ -10,10 +12,10 @@ struct Test {
 }
 
 impl Test {
-    fn new() -> Test {
+    fn new(i32 a, i32 b) -> Test {
         return Test {
-            a: 0,
-            b: 0,
+            a,
+            b,
         };
     }
 
@@ -42,10 +44,7 @@ fn main() -> i32 {
             a: 0,
             b: 0,
         },
-        b: Test {
-            a: 9,
-            b: 0,
-        },
+        b: Test::new(9, 5),
     };
     printf("t.a.a: %d\n", t.a.a);
     printf("t.b.a: %d\n", t.b.a);
@@ -67,4 +66,5 @@ mod bingles {
         i32 a,
         i32 b,
     }
+    
 }

@@ -30,6 +30,7 @@ struct Parser<'parser> {
     current: usize,
     lookahead: usize,
     impl_ctx: Option<String>,
+    current_module: Option<Rc<RefCell<Module>>>,
 }
 
 impl<'parser> Parser<'parser> {
@@ -40,6 +41,7 @@ impl<'parser> Parser<'parser> {
             lookahead: 1,
             source,
             impl_ctx: None,
+            current_module: None,
         }
     }
 
@@ -158,6 +160,7 @@ impl<'parser> Parser<'parser> {
         let path = self.canonicalize_path(path, current_mod)?;
         self.eat(TokenKind::Symbol(Symbol::Semicolon))?;
         Ok(Use {
+            local: false,
             item_path: path,
             span: self.span_end(span)?,
         })
@@ -217,7 +220,7 @@ impl<'parser> Parser<'parser> {
                 self.advance();
             } else {
                 return Err(format!(
-                    "Expected identifier, got {:?} {}",
+                    "Path expected identifier, got {:?} {}",
                     self.current(),
                     self.debug_position()
                 ));
@@ -257,9 +260,10 @@ impl<'parser> Parser<'parser> {
                 path
             },
         }));
+        self.current_module = Some(module.clone());
 
         loop {
-            let mod_ptr = Rc::clone(&module);
+            let mod_ptr = module.clone();
             match self.current() {
                 Some(TokenKind::Keyword(Keyword::Function)) => {
                     let fn_sig = self.function_sig()?;
@@ -289,7 +293,7 @@ impl<'parser> Parser<'parser> {
                         name
                     } else {
                         return Err(format!(
-                            "Expected identifier, got {:?} at {}",
+                            "Impl name expected identifier, got {:?} at {}",
                             self.current(),
                             self.debug_position()
                         ));
@@ -368,7 +372,7 @@ impl<'parser> Parser<'parser> {
             name.clone()
         } else {
             return Err(format!(
-                "Expected identifier, got {:?} at {}",
+                "mod name expected identifier, got {:?} at {}",
                 self.current(),
                 self.debug_position()
             ));
@@ -380,24 +384,62 @@ impl<'parser> Parser<'parser> {
         Ok(module)
     }
 
-    pub fn type_name(&mut self) -> Result<String, String> {
-        debug!("parser::Parser::type_name");
-        let mut type_name = if let Some(TokenKind::Identifier(type_name)) = self.current() {
+    pub fn type_decl_name(&mut self) -> Result<String, String> {
+        let type_name = if let Some(TokenKind::Identifier(type_name)) = self.current() {
             type_name
         } else {
             return Err(format!(
-                "Expected identifier, got {:?} at {}",
+                "Type name expected identifier, got {:?} at {}",
                 self.current(),
                 self.debug_position()
             ));
         };
         self.advance();
+        Ok(type_name)
+    }
+
+    pub fn type_name(&mut self) -> Result<String, String> {
+        debug!("parser::Parser::type_name");
+        let mut type_name = String::new();
+        let span = self.span_start()?;
+        while let Some(TokenKind::Identifier(name)) = self.current() {
+            type_name += &name;
+            self.advance();
+            if let Some(TokenKind::Symbol(Symbol::DoubleColon)) = self.current() {
+                type_name += "::";
+                self.advance();
+            } else {
+                break;
+            }
+        }
 
         while let Some(TokenKind::Operator(Operator::Times)) = self.current() {
             self.advance();
             type_name = format!("*{}", type_name);
         }
-        Ok(type_name)
+
+        let path = type_name
+            .split("::")
+            .map(|s| s.to_string())
+            .collect::<Vec<String>>();
+
+        //let path = self.canonicalize_path(path, self.current_module.clone().unwrap())?;
+
+        let name = if let Some(curr_mod) = &self.current_module {
+            if path.len() > 1 {
+                curr_mod.borrow_mut().dependencies.push(Use {
+                    item_path: path.clone(),
+                    local: true,
+                    span: self.span_end(span)?,
+                })
+            }
+
+            path.last().unwrap().clone()
+        } else {
+            path.last().unwrap().clone()
+        };
+
+        Ok(name)
     }
 
     pub fn fn_params(&mut self) -> Result<(Vec<FunctionParameter>, bool), String> {
@@ -512,7 +554,7 @@ impl<'parser> Parser<'parser> {
             name.clone()
         } else {
             return Err(format!(
-                "Expected identifier, got {:?} at {}",
+                "Function sig expected identifier, got {:?} at {}",
                 self.current(),
                 self.debug_position()
             ));
@@ -563,15 +605,16 @@ impl<'parser> Parser<'parser> {
         debug!("parser::Parser::struct_decl");
         let outer_span = self.span_start()?;
         self.eat(TokenKind::Keyword(Keyword::Struct))?;
-        let name = if let Some(TokenKind::Identifier(name)) = self.advance() {
+        /* let name = if let Some(TokenKind::Identifier(name)) = self.advance() {
             name.clone()
         } else {
             return Err(format!(
-                "Expected identifier, got {:?} at {}",
+                "Struct decl expected identifier, got {:?} at {}",
                 self.current(),
                 self.debug_position()
             ));
-        };
+        }; */
+        let name = self.type_decl_name()?;
         let mut fields = Vec::new();
         self.eat(TokenKind::Symbol(Symbol::OpenBrace))?;
         let mut field_idx = 0;
@@ -587,7 +630,7 @@ impl<'parser> Parser<'parser> {
 
             let Some(TokenKind::Identifier(field_name)) = self.advance() else {
                 return Err(format!(
-                    "Expected identifier, got {:?} at {}",
+                    "Struct field expected identifier, got {:?} at {}",
                     self.current(),
                     self.debug_position()
                 ));
@@ -744,7 +787,7 @@ impl<'parser> Parser<'parser> {
     pub fn struct_init(&mut self) -> Result<Expression, String> {
         debug!("parser::Parser::struct_init");
         let outer_span = self.span_start()?;
-        let name = if let Some(TokenKind::Identifier(name)) = self.advance() {
+        /* let name = if let Some(TokenKind::Identifier(name)) = self.advance() {
             name
         } else {
             return Err(format!(
@@ -752,7 +795,8 @@ impl<'parser> Parser<'parser> {
                 self.current(),
                 self.debug_position()
             ));
-        };
+        }; */
+        let name = self.type_name()?;
 
         self.eat(TokenKind::Symbol(Symbol::OpenBrace))?;
         let mut fields = Vec::new();

@@ -1,9 +1,9 @@
-use std::{borrow::BorrowMut, cell::RefCell, collections::HashMap, error::Error, rc::Rc};
+use std::{cell::{RefCell, Ref}, collections::HashMap, error::Error, rc::Rc, borrow::BorrowMut};
 
 use inkwell::{
     module::Linkage,
     types::BasicType,
-    values::{BasicMetadataValueEnum, BasicValue, BasicValueEnum, PointerValue},
+    values::{BasicMetadataValueEnum, BasicValue, BasicValueEnum, PointerValue, FunctionValue},
     AddressSpace,
 };
 
@@ -17,7 +17,7 @@ use crate::{
             TypedLiteral, TypedLoopStatement, TypedModule, TypedVarAssignment,
         },
         TCModule, TypeCheckerOutput,
-    },
+    }, ast::Module,
 };
 use crate::{
     tokenizer::Operator,
@@ -53,21 +53,31 @@ impl<'gen> CodeGenerator<'gen> {
 
         let tc_modules = self.ctx.tc_mod.modules.clone();
 
+        let mut generated_modules = Vec::new();
+        let mut main_mod_idx = None;
         for module in tc_modules {
+            self.ctx.llvm_module = self.ctx.llvm_ctx.create_module(module.get_path().join("::").as_str());
+            if module.borrow().path.join("::") == "main" {
+                main_mod_idx = Some(generated_modules.len());
+            }
+            println!("module: {}", module.get_name());
             self.codegen_module(module.clone())?;
+            generated_modules.push(self.ctx.llvm_module.clone());
         }
 
-        Ok(self.ctx.llvm_module.clone())
+        let main_module = generated_modules.remove(main_mod_idx.unwrap());
+        for module in generated_modules {
+            main_module.link_in_module(module)?;
+        }
+
+        Ok(main_module)
     }
 
     pub fn codegen_module(
         &mut self,
         module: Rc<RefCell<TypedModule<'gen>>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        //TODO: FIXME
-        //self.ctx.tc_mod = module.clone();
         debug!("generator::CodeGenerator::codegen_module");
-        //self.ctx.llvm_module = self.ctx.llvm_ctx.create_module(module.get_name().as_str());
         let mut local_ctx = LocalCodegenContext {
             names: HashMap::new(),
             types: HashMap::new(),
@@ -87,18 +97,26 @@ impl<'gen> CodeGenerator<'gen> {
             let TypedImport {
                 name,
                 source_module,
+                local,
+                ty
             } = dep;
-            let Some(source_mod) = self.ctx.tc_mod.modules.iter().find(|module| module.borrow().id == *source_module) else {
-                return Err(format!("Module not found: {}", name).into());
+            println!("DEP: {} -> {}", source_module, name);
+            let Some(source_mod) = self.ctx.tc_mod.modules.get(*source_module) else {
+                return Err(format!("Failed to generate IR for module: Module not found: {}", name).into());
             };
             let source_mod = source_mod.borrow();
+            
             let Some(source_item) = source_mod.exports.get(name) else {
                 return Err(format!("source_item: Export not found: {}", name).into());
             };
+            
             match &source_item.ty {
                 TypedExportType::Function(f) => {
                     local_ctx.add_name(CodegenName {
-                        name: source_item.name.clone(),
+                        name: {
+                            println!("{} -> {}", source_item.name, name);
+                            source_item.name.clone()
+                        },
                         ty: Rc::new(CodegenType::new(
                             source_item.name.clone(),
                             TypeSignature::Function(f.clone()),
@@ -110,13 +128,20 @@ impl<'gen> CodeGenerator<'gen> {
                     });
                 }
                 TypedExportType::Struct(id) => {
-                    local_ctx.structs.insert(id.id, id.clone());
+                    // get struct
+                    let Some(structure) = source_mod.ctx.struct_types.get(id) else {
+                        return Err(format!("Failed to generate IR for module: Struct not found: {}", name).into());
+                    };
+                    local_ctx.structs.insert(*id, structure.clone());
                     local_ctx.add_type(CodegenType::new(
-                        source_item.name.clone(),
-                        TypeSignature::Struct(id.id),
+                        {
+                            println!("{} -> {}", source_item.name, name);
+                            source_item.name.clone()
+                        },
+                        TypeSignature::Struct(*id),
                         Some(
                             self.ctx
-                                .to_llvm_ty(&TypeSignature::Struct(id.id), &local_ctx.structs)?,
+                                .to_llvm_ty(&TypeSignature::Struct(*id), &local_ctx.structs)?,
                         ),
                     ));
                 }
@@ -1163,6 +1188,37 @@ impl<'gen> CodeGenerator<'gen> {
         }
     }
 
+    fn get_or_declare_function(
+        &self,
+        fn_name: &str,
+        local_ctx: &LocalCodegenContext<'gen>,
+    ) -> Result<FunctionValue<'gen>, Box<dyn Error>> {
+        debug!("generator::CodeGenerator::get_or_declare_function");
+        let func = self.ctx.llvm_module.get_function(&fn_name);
+
+        if let Some(func) = func {
+            return Ok(func);
+        }
+
+        let func = local_ctx.names.get(fn_name).ok_or_else(|| {
+            format!(
+                "Function {} not found: {}:{}",
+                fn_name,
+                file!(),
+                line!()
+            )
+        })?;
+
+        let llvm_ty = func.ty.llvm_ty.clone().unwrap();
+
+        let func = self.ctx.llvm_module.add_function(
+            &fn_name,
+            llvm_ty.function()?,
+            Some(Linkage::External),
+        );
+        Ok(func)
+    }
+
     fn codegen_fn_call(
         &self,
         mut fn_call: TypedFunctionCall<'gen>,
@@ -1181,10 +1237,8 @@ impl<'gen> CodeGenerator<'gen> {
                 // Function call
                 (
                     name.clone(),
-                    self.ctx
-                        .llvm_module
-                        .get_function(&name)
-                        .ok_or_else(|| format!("Callee {} not found", name))?,
+                    self
+                        .get_or_declare_function(&name, &local_ctx)?,
                     None,
                 )
             }
@@ -1239,13 +1293,15 @@ impl<'gen> CodeGenerator<'gen> {
                 
                 let Some(llvm_fn) = self.ctx.llvm_module.get_function(&full_name) else  {
                     
-                    return Err(format!("Callee {} not found", full_name).into());
-                }; 
+                    return Err(format!("Callee {} not found!", full_name).into());
+                };
 
                 (full_name.clone(), llvm_fn, Some(object_val))
             }
             _ => unreachable!("Member function calls not yet supported in codegen"),
         };
+
+        
 
         let mut args = Vec::new();
 

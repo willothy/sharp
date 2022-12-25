@@ -10,6 +10,12 @@ pub struct NodeSpan {
     pub end: TokenPosition,
 }
 
+impl std::fmt::Display for NodeSpan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.start)
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct Module {
     pub fn_defs: Vec<FunctionDefinition>,
@@ -54,6 +60,7 @@ impl FmtPath for ModulePath {
 #[derive(Debug, PartialEq, Clone)]
 pub struct Use {
     pub item_path: ModulePath,
+    pub local: bool,
     pub span: NodeSpan,
 }
 

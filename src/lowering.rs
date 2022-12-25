@@ -20,6 +20,7 @@ pub enum ExportType {
 pub struct Import {
     pub name: String,
     pub source_module: ModuleId,
+    pub local: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -235,6 +236,7 @@ impl IntermediateProgram {
                 Ok(Import {
                     name,
                     source_module,
+                    local: dep.local,
                 })
             })
             .collect::<Result<Vec<Import>, String>>()?;

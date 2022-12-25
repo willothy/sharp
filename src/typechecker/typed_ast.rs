@@ -19,7 +19,7 @@ pub struct TypedModule<'ast> {
     pub fn_decls: Vec<TypedFunctionDeclaration<'ast>>,
     pub structs: Vec<TypedStructDeclaration<'ast>>,
     pub submodules: HashMap<String, ModuleId>,
-    pub dependencies: Vec<TypedImport>,
+    pub dependencies: Vec<TypedImport<'ast>>,
     pub parent: Option<ModuleId>,
     pub exports: HashMap<String, TypedExport<'ast>>,
     pub path: ModulePath,
@@ -37,14 +37,16 @@ pub struct TypedExport<'export> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TypedExportType<'export> {
     Function(FunctionType<'export>),
-    Struct(StructType<'export>),
+    Struct(StructId /* StructType<'export> */),
     Module(ModuleId),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TypedImport {
+pub struct TypedImport<'a> {
     pub name: String,
     pub source_module: ModuleId,
+    pub local: bool,
+    pub ty: TypedExportType<'a>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

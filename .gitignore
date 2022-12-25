@@ -4,3 +4,7 @@ test.ll
 test.s
 test
 out.ll
+*.old
+*.o
+modules.json
+modules.txt

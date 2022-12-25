@@ -1,6 +1,10 @@
 // Author: Will Hopkins
 
-use std::{borrow::Borrow, fs, path::PathBuf};
+use std::{fs, path::PathBuf};
+
+use inkwell::targets::{
+    CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
+};
 
 use crate::tokenizer::Span;
 
@@ -9,32 +13,13 @@ use self::codegen::generator::CodeGenerator;
 mod ast;
 mod cli;
 mod codegen;
+mod debug;
 mod lowering;
 mod parser;
 mod tokenizer;
 mod typechecker;
 
 const DEBUG_WRITE_IR_FILE: bool = true;
-
-pub static mut DEBUG: bool = false;
-
-#[macro_export]
-macro_rules! debug {
-    ($name:expr) => {
-        if unsafe { crate::DEBUG } {
-            println!("{}", $name);
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! debugln {
-    () => {
-        if unsafe { crate::DEBUG } {
-            println!("{}", line!());
-        }
-    };
-}
 
 // TODO: Static struct member functions (::new(), etc.)
 // TODO: Primitive member functions
@@ -47,7 +32,7 @@ fn run<'a>() -> Result<(), Box<dyn std::error::Error>> {
 
     if args.debug {
         unsafe {
-            crate::DEBUG = true;
+            crate::debug::DEBUG = true;
         }
     }
 
@@ -123,11 +108,29 @@ fn run<'a>() -> Result<(), Box<dyn std::error::Error>> {
 
     if args.compile {
         let mod_path_str = mod_path.to_str().unwrap();
-        let out_path = mod_path.with_file_name("test");
+        let out_path = mod_path.with_file_name("test.s");
+        //Target::initialize_aarch64(&InitializationConfig::default());
+        Target::initialize_native(&InitializationConfig::default())?;
+        let triple = TargetMachine::get_default_triple();
+        let t = Target::from_triple(&triple)?;
+        let Some(target_machine) = t.create_target_machine(
+        &triple,
+        TargetMachine::get_host_cpu_name().to_str().unwrap(),
+        TargetMachine::get_host_cpu_features().to_str().unwrap(),
+        inkwell::OptimizationLevel::Aggressive,
+            RelocMode::Default,
+            CodeModel::Default,
+        ) else {
+            return Err("Failed to create target machine".into());
+        };
+        generated_mod.set_triple(&triple);
+        generated_mod.set_data_layout(&target_machine.get_target_data().get_data_layout());
+        generated_mod.verify()?;
+        target_machine.write_to_file(&generated_mod, FileType::Assembly, &out_path)?;
         let output = std::process::Command::new("clang")
             .arg(mod_path_str)
             .arg("-o")
-            .arg(out_path)
+            .arg(out_path.with_extension(""))
             .arg("-fcolor-diagnostics")
             .output()?;
 
