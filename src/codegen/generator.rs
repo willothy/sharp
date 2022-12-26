@@ -1281,7 +1281,6 @@ impl<'gen> CodeGenerator<'gen> {
         }
 
         // TODO: Fix this, it's hacky
-        println!("names: {:#?}", local_ctx.names);
         let func = if let Some((_, func)) = local_ctx
             .names
             .iter()
@@ -1322,19 +1321,7 @@ impl<'gen> CodeGenerator<'gen> {
                 // Function call
                 (
                     name.clone(),
-                    {
-                        /* println!("names: {:#?}", local_ctx.names);
-                        let full_name = local_ctx
-                            .names
-                            .get(&name)
-                            .ok_or_else(|| {
-                                format!("Function {} not found: {}:{}", name, file!(), line!())
-                            })?
-                            .name
-                            .clone();
-                        println!("Function call: {} -> {}", name, full_name); */
-                        self.get_or_declare_function(&name, &local_ctx)?
-                    },
+                    { self.get_or_declare_function(&name, &local_ctx)? },
                     None,
                 )
             }

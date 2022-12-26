@@ -172,7 +172,7 @@ mod tests {
         let module = parser::parse(tokens, source.to_string(), "main".into())?;
 
         let mut intermediate = lowering::IntermediateProgram::new();
-        let lowered = intermediate.lower(module, None)?;
+        intermediate.lower(module, None)?;
 
         let mut tc = typechecker::TypeChecker::new(intermediate);
         let checked = tc.typecheck()?;

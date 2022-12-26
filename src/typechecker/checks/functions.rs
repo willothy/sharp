@@ -201,7 +201,6 @@ impl<'tc> TypeChecker<'tc> {
         let mut has_self_param = false;
         for param in &function.params {
             let t = self.ctx.get_type(param.type_name.clone())?;
-            //println!("param: {:?} {:?}", param.name, t);
             if param.name.as_str() == "self" {
                 has_self_param = true;
             }
