@@ -79,14 +79,15 @@ impl<'ctx> LocalCodegenContext<'ctx> {
     pub fn with_impl(
         &self,
         impl_ctx: Option<ImplCtx<'ctx>>,
-        codegen_ctx: &CodegenContext<'ctx>,
+        self_arg: bool,
     ) -> Result<Self, String> {
-        let mut ctx = Self {
+        let ctx = Self {
             impl_ctx,
+            is_self_arg: self_arg,
             ..self.clone()
         };
 
-        let Some(impl_ctx) = &ctx.impl_ctx else  {
+        /* let Some(impl_ctx) = &ctx.impl_ctx else  {
             return Err("impl_ctx is None".into());
         };
         let TypeSignature::Struct(id) = impl_ctx.self_type else {
@@ -101,8 +102,6 @@ impl<'ctx> LocalCodegenContext<'ctx> {
                 panic!("impl_ctx.self_type is not a struct");
             };
 
-            let full_name = format!("{}.{}", struct_name, name);
-
             ctx.add_name(CodegenName {
                 name: full_name.clone(),
                 ty: Rc::new(CodegenType::new(
@@ -114,7 +113,7 @@ impl<'ctx> LocalCodegenContext<'ctx> {
                 is_arg: false,
                 arg_idx: None,
             });
-        }
+        } */
 
         Ok(ctx)
     }
@@ -126,8 +125,8 @@ impl<'ctx> LocalCodegenContext<'ctx> {
         }
     }
 
-    pub fn add_name(&mut self, name: CodegenName<'ctx>) {
-        self.names.insert(name.name.clone(), name);
+    pub fn add_name(&mut self, name: String, reg: CodegenName<'ctx>) {
+        self.names.insert(name, reg);
     }
 
     pub fn get_name(&self, name: &str) -> Option<&CodegenName<'ctx>> {

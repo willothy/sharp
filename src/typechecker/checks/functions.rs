@@ -134,6 +134,7 @@ impl<'tc> TypeChecker<'tc> {
         } else {
             function.name.clone()
         }; */
+
         local_ctx.return_type = return_type.clone();
         for (_, param) in params {
             local_ctx.names.insert(
@@ -195,7 +196,8 @@ impl<'tc> TypeChecker<'tc> {
         let mut has_self_param = false;
         for param in &function.params {
             let t = self.ctx.get_type(param.type_name.clone())?;
-            if param.name == "self" {
+            //println!("param: {:?} {:?}", param.name, t);
+            if param.name.as_str() == "self" {
                 has_self_param = true;
             }
             params.insert(

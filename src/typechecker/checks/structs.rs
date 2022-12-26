@@ -33,7 +33,6 @@ impl<'tc> TypeChecker<'tc> {
                 )?;
 
                 let struct_ty = self.ctx.struct_types.get_mut(&struct_id).unwrap();
-
                 struct_ty.methods.insert(func.name.clone(), func);
             }
         }

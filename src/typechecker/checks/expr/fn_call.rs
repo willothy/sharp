@@ -64,7 +64,16 @@ impl<'tc> TypeChecker<'tc> {
                 ))?;
 
                 let member_fn_ty = member_method.fn_ty.clone();
-                let full_name = struct_ty.name.clone() + "." + &member_name;
+                let full_name = if let TypeSignature::Function(f) = member_fn_ty.sig() {
+                    if f.has_self_param {
+                        struct_ty.name.clone() + "." + &member_name
+                    } else {
+                        struct_ty.name.clone() + "::" + &member_name
+                    }
+                } else {
+                    return Err(format!("Member function must be a function"));
+                };
+
                 local_ctx
                     .names
                     .insert(full_name.clone(), Name { ty: member_fn_ty });
@@ -138,7 +147,15 @@ impl<'tc> TypeChecker<'tc> {
                     ))?;
 
                     let member_fn_ty = member_method.fn_ty.clone();
-                    let full_name = struct_ty.name.clone() + "." + &fn_name;
+                    let full_name = if let TypeSignature::Function(f) = member_fn_ty.sig() {
+                        if f.has_self_param {
+                            struct_ty.name.clone() + "." + &fn_name
+                        } else {
+                            struct_ty.name.clone() + "::" + &fn_name
+                        }
+                    } else {
+                        return Err(format!("Member function must be a function"));
+                    };
                     local_ctx
                         .names
                         .insert(full_name.clone(), Name { ty: member_fn_ty });
@@ -148,28 +165,13 @@ impl<'tc> TypeChecker<'tc> {
                     // It's a module
                     let mut item_path = path.clone();
                     item_path.reverse();
-                    /* let Some(mod_name) = item_path.pop() else {
-                        return Err(format!("Module path is empty"));
-                    }; */
-
-                    /* let module = self
-                    .module_ids
-                    .get(&item_path)
-                    .ok_or(format!("Module {} does not exist", first))?; */
-
-                    /* println!("module IDs: {:?}", self.module_ids);
-                    println!("modules: {:?}", self.modules); */
 
                     let mod_id = self
                         .module_ids
                         .get(&self.canonicalize_path(&item_path))
                         .ok_or(format!("Module {:?} does not exist", item_path))?;
 
-                    //println!("mod_id: {:?}", mod_id);
-
                     let module = self.modules.get(*mod_id).unwrap().clone();
-
-                    println!("module: {:?}", module);
 
                     let mod_borrowed = module.borrow();
 
@@ -177,6 +179,26 @@ impl<'tc> TypeChecker<'tc> {
                         "Module {} does not have a function {}",
                         first, fn_name
                     ))?;
+
+                    /* let full_name = if let TypedExportType::Function(f) = &func.ty {
+                        if f.has_self_param {
+                            struct_ty.name.clone() + "." + &fn_name
+                        } else {
+                            struct_ty.name.clone() + "::" + &fn_name
+                        }
+                    } else {
+                        return Err(format!("Member function must be a function"));
+                    }; */
+
+                    /*  let full_name =  {
+                        if f.has_self_param {
+                            struct_ty.name.clone() + "." + &fn_name
+                        } else {
+                            struct_ty.name.clone() + "::" + &fn_name
+                        }
+                    } else {
+                        return Err(format!("Member function must be a function"));
+                    }; */
 
                     let curr_mod_id = self.module_ids.get(&self.current_module_path).unwrap();
                     let curr_mod = self.modules.get(*curr_mod_id).unwrap().clone();

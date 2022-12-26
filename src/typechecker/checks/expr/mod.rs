@@ -104,7 +104,15 @@ impl<'tc> TypeChecker<'tc> {
                     }
 
                     let member_fn_ty = member_method.fn_ty.clone();
-                    let full_name = struct_ty.name.clone() + "." + &fn_name;
+                    let full_name = if let TypeSignature::Function(f) = member_fn_ty.sig() {
+                        if f.has_self_param {
+                            struct_ty.name.clone() + "." + &fn_name
+                        } else {
+                            struct_ty.name.clone() + "::" + &fn_name
+                        }
+                    } else {
+                        return Err(format!("Member function must be a function"));
+                    };
                     local_ctx
                         .names
                         .insert(full_name.clone(), Name { ty: member_fn_ty });

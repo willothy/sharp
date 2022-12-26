@@ -1,24 +1,33 @@
-//use self::bingles::three;
+use self::bingles::three;
+use self::bingles::Test;
 
 mod bingles {
+    use super::printf;
+
     fn three() -> i32 {
+        printf("three: %d\n", 3);
         return 3;
     }
+
+    struct Test {
+        i32 a,
+        i32 b,
+        i32 c
+    }
+
 }
+
+fn printf(str fmt, ...) -> i32;
 
 fn main() -> i32 {
     let Test a = Test{
         a: 1,
         b: 2,
-        c: self::bingles::three(),
+        c: three(),
     };
+    printf("%d\n", a.c);
     return 0;
 }
 
-struct Test {
-    i32 a,
-    i32 b,
-    i32 c
-}
 
 

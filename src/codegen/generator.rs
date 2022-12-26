@@ -1,23 +1,31 @@
-use std::{cell::{RefCell, Ref}, collections::HashMap, error::Error, rc::Rc, borrow::BorrowMut};
+use std::{
+    borrow::BorrowMut,
+    cell::{Ref, RefCell},
+    collections::HashMap,
+    error::Error,
+    rc::Rc,
+};
 
 use inkwell::{
     module::Linkage,
     types::BasicType,
-    values::{BasicMetadataValueEnum, BasicValue, BasicValueEnum, PointerValue, FunctionValue},
+    values::{BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, PointerValue},
     AddressSpace,
 };
 
 use crate::{
+    ast::{Module, ModulePath},
     codegen::context::{CodegenLLVMType, GetOrAddFunction, ImplCtx},
     debug, debugln,
     tokenizer::Literal,
     typechecker::{
+        type_sig::StructType,
         typed_ast::{
             TypedExportType, TypedExpression, TypedExpressionData, TypedFunctionCall, TypedImport,
             TypedLiteral, TypedLoopStatement, TypedModule, TypedVarAssignment,
         },
         TCModule, TypeCheckerOutput,
-    }, ast::Module,
+    },
 };
 use crate::{
     tokenizer::Operator,
@@ -56,11 +64,13 @@ impl<'gen> CodeGenerator<'gen> {
         let mut generated_modules = Vec::new();
         let mut main_mod_idx = None;
         for module in tc_modules {
-            self.ctx.llvm_module = self.ctx.llvm_ctx.create_module(module.get_path().join("::").as_str());
+            self.ctx.llvm_module = self
+                .ctx
+                .llvm_ctx
+                .create_module(module.get_path().join("::").as_str());
             if module.borrow().path.join("::") == "main" {
                 main_mod_idx = Some(generated_modules.len());
             }
-            println!("module: {}", module.get_name());
             self.codegen_module(module.clone())?;
             generated_modules.push(self.ctx.llvm_module.clone());
         }
@@ -71,6 +81,40 @@ impl<'gen> CodeGenerator<'gen> {
         }
 
         Ok(main_module)
+    }
+
+    pub fn canonicalize_fn_name(&self, name: &str, source_module: &ModulePath) -> String {
+        let path = source_module.join("::");
+        if path == "main" {
+            name.to_string()
+        } else {
+            path + "::" + name
+        }
+    }
+
+    pub fn canonicalize_struct_name(&self, name: &str, source_module: &ModulePath) -> String {
+        let path = source_module.join("::");
+        if path == "main" {
+            name.to_string()
+        } else {
+            path + "::" + name
+        }
+    }
+
+    pub fn canonicalize_struct_member_name(
+        &self,
+        name: &str,
+        source_module: &ModulePath,
+        self_name: &str,
+        has_self_param: bool,
+    ) -> String {
+        let path = source_module.join("::");
+        let final_sep = if has_self_param { "." } else { "::" };
+        if path == "main" {
+            self_name.to_string() + final_sep + name
+        } else {
+            path + "::" + self_name + final_sep + name
+        }
     }
 
     pub fn codegen_module(
@@ -98,34 +142,34 @@ impl<'gen> CodeGenerator<'gen> {
                 name,
                 source_module,
                 local,
-                ty
+                ty,
             } = dep;
-            println!("DEP: {} -> {}", source_module, name);
             let Some(source_mod) = self.ctx.tc_mod.modules.get(*source_module) else {
                 return Err(format!("Failed to generate IR for module: Module not found: {}", name).into());
             };
             let source_mod = source_mod.borrow();
-            
+
             let Some(source_item) = source_mod.exports.get(name) else {
                 return Err(format!("source_item: Export not found: {}", name).into());
             };
-            
+
             match &source_item.ty {
                 TypedExportType::Function(f) => {
-                    local_ctx.add_name(CodegenName {
-                        name: {
-                            println!("{} -> {}", source_item.name, name);
-                            source_item.name.clone()
+                    let full_name = self.canonicalize_fn_name(name, &source_mod.path);
+                    local_ctx.add_name(
+                        name.clone(),
+                        CodegenName {
+                            name: full_name.clone(),
+                            ty: Rc::new(CodegenType::new(
+                                full_name,
+                                TypeSignature::Function(f.clone()),
+                                Some(self.ctx.function_to_llvm_ty(&f, &local_ctx.structs)?),
+                            )),
+                            alloc: None,
+                            is_arg: false,
+                            arg_idx: None,
                         },
-                        ty: Rc::new(CodegenType::new(
-                            source_item.name.clone(),
-                            TypeSignature::Function(f.clone()),
-                            Some(self.ctx.function_to_llvm_ty(&f, &local_ctx.structs)?),
-                        )),
-                        alloc: None,
-                        is_arg: false,
-                        arg_idx: None,
-                    });
+                    );
                 }
                 TypedExportType::Struct(id) => {
                     // get struct
@@ -134,10 +178,7 @@ impl<'gen> CodeGenerator<'gen> {
                     };
                     local_ctx.structs.insert(*id, structure.clone());
                     local_ctx.add_type(CodegenType::new(
-                        {
-                            println!("{} -> {}", source_item.name, name);
-                            source_item.name.clone()
-                        },
+                        self.canonicalize_struct_name(&structure.name, &source_mod.path),
                         TypeSignature::Struct(*id),
                         Some(
                             self.ctx
@@ -151,14 +192,14 @@ impl<'gen> CodeGenerator<'gen> {
 
         // Codegen structs
         for structure in &module.borrow().structs {
-            self.codegen_struct(structure.clone(), &mut local_ctx)?;
+            self.codegen_struct(structure.clone(), module.clone(), &mut local_ctx)?;
         }
 
         for def in &module.borrow().fn_defs {
             let t = def.fn_ty.sig();
             let t = if let TypeSignature::Function(fn_t) = t.clone() {
                 Rc::from(CodegenType::new(
-                    def.name.clone(),
+                    self.canonicalize_fn_name(&def.name, &module.get_path()),
                     t,
                     Some(self.ctx.function_to_llvm_ty(&fn_t, &local_ctx.structs)?),
                 ))
@@ -170,14 +211,14 @@ impl<'gen> CodeGenerator<'gen> {
             };
 
             let name = CodegenName::new(def.name.clone(), t.clone());
-            local_ctx.add_name(name);
+            local_ctx.add_name(name.name.clone(), name);
         }
 
         for decl in &module.borrow().fn_decls {
             let t = decl.fn_ty.sig();
             let t = if let TypeSignature::Function(fn_t) = t.clone() {
                 Rc::from(CodegenType::new(
-                    decl.name.clone(),
+                    self.canonicalize_fn_name(&decl.name, &module.get_path()),
                     t,
                     Some(self.ctx.function_to_llvm_ty(&fn_t, &local_ctx.structs)?),
                 ))
@@ -187,9 +228,8 @@ impl<'gen> CodeGenerator<'gen> {
                 };
                 t.clone()
             };
-
             let name = CodegenName::new(decl.name.clone(), t.clone());
-            local_ctx.add_name(name);
+            local_ctx.add_name(name.name.clone(), name);
         }
 
         // Codegen function declarations
@@ -198,7 +238,7 @@ impl<'gen> CodeGenerator<'gen> {
         }
 
         for def in &module.borrow().fn_defs {
-            self.codegen_fn_def(def.clone(), local_ctx.clone())?;
+            self.codegen_fn_def(def.clone(), module.clone(), local_ctx.clone())?;
         }
 
         /* for (_, submodule_id) in &module.borrow().submodules {
@@ -215,6 +255,7 @@ impl<'gen> CodeGenerator<'gen> {
     fn codegen_struct(
         &self,
         structure: TypedStructDeclaration<'gen>,
+        mod_ref: Rc<RefCell<TypedModule<'gen>>>,
         local_ctx: &mut LocalCodegenContext<'gen>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         debug!("generator::CodeGenerator::codegen_struct");
@@ -224,7 +265,7 @@ impl<'gen> CodeGenerator<'gen> {
         local_ctx.types.insert(
             ty.sig(),
             Rc::new(CodegenType {
-                name: name.clone(),
+                name: self.canonicalize_struct_name(&name, &mod_ref.get_path()),
                 ty: ty.sig(),
                 llvm_ty: Some(struct_t),
             }),
@@ -247,24 +288,31 @@ impl<'gen> CodeGenerator<'gen> {
             let TypeSignature::Function(func_ty) = method.fn_ty.sig() else {
                 return Err(format!("Type not found: {:?} {}:{}", method.fn_ty.sig(), file!(), line!()).into());
             };
-            /* local_ctx.add_name(CodegenName::new(
-                struct_name.clone() + "." + &name,
-                Rc::new(CodegenType {
-                    name: name.clone(),
-                    ty: method.fn_ty.sig(),
-                    llvm_ty: Some(self.ctx.function_to_llvm_ty(&func_ty, &local_ctx.structs)?),
+            let full_name = self.canonicalize_struct_member_name(
+                &method.name,
+                &mod_ref.get_path(),
+                &struct_name,
+                method.has_self_param,
+            );
+            let mut method_ctx = local_ctx.with_impl(
+                Some(ImplCtx {
+                    self_type: ty.sig(),
+                    self_name: struct_name.clone(),
                 }),
-            )); */
-            self.codegen_fn_def(
-                method.clone(),
-                local_ctx.self_arg(true).with_impl(
-                    Some(ImplCtx {
-                        self_type: ty.sig(),
-                        self_name: struct_name.clone(),
-                    }),
-                    &self.ctx,
-                )?,
+                method.has_self_param,
             )?;
+            method_ctx.add_name(
+                full_name.clone(),
+                CodegenName::new(
+                    full_name.clone(),
+                    Rc::new(CodegenType {
+                        name: full_name,
+                        ty: method.fn_ty.sig(),
+                        llvm_ty: Some(self.ctx.function_to_llvm_ty(&func_ty, &local_ctx.structs)?),
+                    }),
+                ),
+            );
+            self.codegen_fn_def(method.clone(), mod_ref.clone(), method_ctx)?;
         }
 
         Ok(())
@@ -296,17 +344,27 @@ impl<'gen> CodeGenerator<'gen> {
     fn codegen_fn_def(
         &self,
         func: TypedFunctionDefinition<'gen>,
+        mod_ref: Rc<RefCell<TypedModule<'gen>>>,
         mut local_ctx: LocalCodegenContext<'gen>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         debug!("generator::CodeGenerator::codegen_fn_def");
+        let source_mod_path = mod_ref.get_path().clone();
         let func_name = if let Some(impl_ctx) = &local_ctx.impl_ctx {
-            impl_ctx.self_name.clone() + "." + &func.name
+            self.canonicalize_struct_member_name(
+                &func.name,
+                &source_mod_path,
+                &impl_ctx.self_name,
+                func.has_self_param,
+            )
         } else {
-            func.name.clone()
+            self.canonicalize_fn_name(&func.name, &source_mod_path)
         };
-
-        let Some(func_reg) = local_ctx.names.get(&func_name) else {
-            return Err(format!("fn_def: Function reg not found: {}", func_name).into());
+        let func_reg = if let Some(func_reg) = local_ctx.names.get(&func_name) {
+            func_reg
+        } else if let Some(func_reg) = local_ctx.names.get(&func.name) {
+            func_reg
+        } else {
+            return Err(format!("fn_def: Function not found: {}", func_name).into());
         };
 
         let Some(llvm_ty) = func_reg.ty.llvm_ty.clone() else {
@@ -336,7 +394,7 @@ impl<'gen> CodeGenerator<'gen> {
                 .nth(param.idx as usize)
                 .ok_or(format!("Param not found: {}", param.name))?
                 .set_name(&param_name.name);
-            local_ctx.add_name(param_name);
+            local_ctx.add_name(param_name.name.clone(), param_name);
         }
 
         let entry_block = self.ctx.llvm_ctx.append_basic_block(llvm_fn, "entry");
@@ -527,7 +585,7 @@ impl<'gen> CodeGenerator<'gen> {
         }
 
         var_name.alloc = Some(store_ptr.clone());
-        local_ctx.add_name(var_name);
+        local_ctx.add_name(var_name.name.clone(), var_name);
 
         Ok(())
     }
@@ -1200,19 +1258,22 @@ impl<'gen> CodeGenerator<'gen> {
             return Ok(func);
         }
 
-        let func = local_ctx.names.get(fn_name).ok_or_else(|| {
-            format!(
-                "Function {} not found: {}:{}",
-                fn_name,
-                file!(),
-                line!()
-            )
-        })?;
+        let func = if let Some((_, func)) = local_ctx
+            .names
+            .iter()
+            .find(|(_, reg)| reg.name.as_str() == fn_name)
+        {
+            func
+        } else if let Some(func) = local_ctx.names.get(fn_name) {
+            func
+        } else {
+            return Err(format!("Function not found: {}", fn_name).into());
+        };
 
         let llvm_ty = func.ty.llvm_ty.clone().unwrap();
 
         let func = self.ctx.llvm_module.add_function(
-            &fn_name,
+            &func.name,
             llvm_ty.function()?,
             Some(Linkage::External),
         );
@@ -1237,8 +1298,19 @@ impl<'gen> CodeGenerator<'gen> {
                 // Function call
                 (
                     name.clone(),
-                    self
-                        .get_or_declare_function(&name, &local_ctx)?,
+                    {
+                        /* println!("names: {:#?}", local_ctx.names);
+                        let full_name = local_ctx
+                            .names
+                            .get(&name)
+                            .ok_or_else(|| {
+                                format!("Function {} not found: {}:{}", name, file!(), line!())
+                            })?
+                            .name
+                            .clone();
+                        println!("Function call: {} -> {}", name, full_name); */
+                        self.get_or_declare_function(&name, &local_ctx)?
+                    },
                     None,
                 )
             }
@@ -1285,14 +1357,19 @@ impl<'gen> CodeGenerator<'gen> {
                 } = member.as_ref().clone() else {
                     return Err("Member is not an identifier".into());
                 };
-                let full_name = struct_ty.name.clone() + "." + &name;
                 //self.ctx.llvm_module.print_to_stderr();
                 let TypeSignature::Function(f) = struct_ty.methods.get(&name).unwrap().fn_ty.sig() else {
                     return Err("Method not found".into());
                 };
-                
+
+                let full_name = if f.has_self_param {
+                    struct_ty.name.clone() + "." + &name
+                } else {
+                    struct_ty.name.clone() + "::" + &name
+                };
+
                 let Some(llvm_fn) = self.ctx.llvm_module.get_function(&full_name) else  {
-                    
+
                     return Err(format!("Callee {} not found!", full_name).into());
                 };
 
@@ -1300,8 +1377,6 @@ impl<'gen> CodeGenerator<'gen> {
             }
             _ => unreachable!("Member function calls not yet supported in codegen"),
         };
-
-        
 
         let mut args = Vec::new();
 
@@ -1385,15 +1460,39 @@ impl<'gen> CodeGenerator<'gen> {
         Ok(result)
     }
 
+    fn field_name_at(
+        &self,
+        struct_ty: Rc<CodegenType>,
+        idx: usize,
+        local_ctx: &LocalCodegenContext<'gen>,
+    ) -> String {
+        let TypeSignature::Struct(id) = struct_ty.ty.clone() else {
+            unreachable!();
+        };
+        let struct_ty = local_ctx.structs.get(&id).unwrap();
+        struct_ty
+            .fields
+            .iter()
+            .find(|(_, f)| f.idx as usize == idx)
+            .unwrap()
+            .1
+            .name
+            .clone()
+    }
+
     fn codegen_struct_init(
         &self,
         struct_init: TypedStructInitializer<'gen>,
         local_ctx: LocalCodegenContext<'gen>,
     ) -> Result<BasicValueEnum<'gen>, Box<dyn Error>> {
         debug!("generator::CodeGenerator::codegen_struct_init");
-        let Some(struct_ty) = local_ctx.get_type_by_name(&struct_init.struct_name.clone()) else {
+        /* let Some(struct_ty) = local_ctx.get_type_by_name(&struct_init.struct_name.clone()) else {
             return Err(format!("codegen_struct_init: Struct {} not found", struct_init.struct_name.clone()).into());
+        }; */
+        let Some(struct_codegen_ty) = local_ctx.types.get(&struct_init.struct_ty.sig()) else {
+            return Err(format!("codegen_struct_init: Struct {:?} not found", struct_init.struct_ty.sig()).into());
         };
+        let struct_name = struct_codegen_ty.name.clone();
 
         let mut values = Vec::new();
         for field in struct_init.fields.iter() {
@@ -1404,7 +1503,7 @@ impl<'gen> CodeGenerator<'gen> {
             values.push((idx, field));
         }
 
-        let Some(llvm_ty) = &struct_ty.llvm_ty else {
+        let Some(llvm_ty) = &struct_codegen_ty.llvm_ty else {
             return Err("Invalid struct type".into());
         };
 
@@ -1412,24 +1511,24 @@ impl<'gen> CodeGenerator<'gen> {
         let global = if let Some(global) = self
             .ctx
             .llvm_module
-            .get_global((struct_init.struct_name.clone() + ".init").as_str())
+            .get_global((struct_name.clone() + ".init").as_str())
         {
             global
         } else {
             let global = self.ctx.llvm_module.add_global(
                 llvm_ty.struct_type()?,
                 Some(AddressSpace::Global),
-                (struct_init.struct_name.clone() + ".init").as_str(),
+                (struct_name.clone() + ".init").as_str(),
             );
             global.set_initializer(&struct_ty.const_zero());
             global.set_constant(true);
             global
         };
 
-        let temp_alloc = self.ctx.ir_builder.build_alloca(
-            struct_ty,
-            (struct_init.struct_name.clone() + ".init_temp").as_str(),
-        );
+        let temp_alloc = self
+            .ctx
+            .ir_builder
+            .build_alloca(struct_ty, (struct_name.clone() + "_init_temp").as_str());
 
         self.ctx.ir_builder.build_memcpy(
             temp_alloc,
@@ -1444,7 +1543,7 @@ impl<'gen> CodeGenerator<'gen> {
             let Some(gep) = self.ctx.ir_builder.build_struct_gep(
                 temp_alloc,
                 *idx,
-                (struct_init.struct_name.clone() + ".field." + idx.to_string().as_str() + ".init.gep").as_str(),
+                (struct_name.clone() + "." + &self.field_name_at(struct_codegen_ty.clone(), (*idx) as usize, &local_ctx) + "_init_gep").as_str(),
             ).ok() else {
                 return Err("Invalid gep".into());
             };
@@ -1461,7 +1560,7 @@ impl<'gen> CodeGenerator<'gen> {
 
         let load = self.ctx.ir_builder.build_load(
             temp_alloc,
-            ("load_".to_owned() + &struct_init.struct_name + "_init").as_str(),
+            ("load_".to_owned() + &struct_name + "_init").as_str(),
         );
 
         Ok(load)
