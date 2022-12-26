@@ -9,7 +9,7 @@ use crate::{
     },
     debug,
     tokenizer::{
-        AssignmentOperator, Keyword, Operator, OperatorType, Symbol, Token, TokenKind,
+        AssignmentOperator, Attribute, Keyword, Operator, OperatorType, Symbol, Token, TokenKind,
         TokenPosition,
     },
 };
@@ -31,6 +31,7 @@ struct Parser<'parser> {
     lookahead: usize,
     impl_ctx: Option<String>,
     current_module: Option<Rc<RefCell<Module>>>,
+    unclaimed_attrs: Option<Vec<Attribute>>,
 }
 
 impl<'parser> Parser<'parser> {
@@ -42,6 +43,7 @@ impl<'parser> Parser<'parser> {
             source,
             impl_ctx: None,
             current_module: None,
+            unclaimed_attrs: None,
         }
     }
 
@@ -265,13 +267,17 @@ impl<'parser> Parser<'parser> {
         loop {
             let mod_ptr = module.clone();
             match self.current() {
+                Some(TokenKind::Attributes(attrs)) => {
+                    self.advance();
+                    self.unclaimed_attrs = Some(attrs);
+                }
                 Some(TokenKind::Keyword(Keyword::Function)) => {
                     let fn_sig = self.function_sig()?;
                     if let Some(TokenKind::Symbol(Symbol::Semicolon)) = self.current() {
                         let func_decl: FunctionDeclaration = self.function_decl(fn_sig)?;
                         mod_ptr.borrow_mut().fn_decls.push(func_decl);
                     } else {
-                        let func = self.function_def(fn_sig)?;
+                        let func: FunctionDefinition = self.function_def(fn_sig)?;
                         mod_ptr.borrow_mut().fn_defs.push(func);
                     }
                 }
@@ -598,6 +604,20 @@ impl<'parser> Parser<'parser> {
             body,
             variadic,
             span: self.span_end(span)?,
+            attrs: {
+                if self.unclaimed_attrs.is_some() {
+                    /* let attrs = self.unclaimed_attrs.clone().unwrap();
+                    self.unclaimed_attrs = None; */
+                    let attrs = std::mem::replace(&mut self.unclaimed_attrs, None);
+                    if let Some(attrs) = attrs {
+                        attrs
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                }
+            },
         })
     }
 
@@ -1315,6 +1335,20 @@ impl<'parser> Parser<'parser> {
             params: fn_sig.1,
             return_type: fn_sig.2,
             variadic: fn_sig.3,
+            attrs: {
+                if self.unclaimed_attrs.is_some() {
+                    /* let attrs = self.unclaimed_attrs.clone().unwrap();
+                    self.unclaimed_attrs = None; */
+                    let attrs = std::mem::replace(&mut self.unclaimed_attrs, None);
+                    if let Some(attrs) = attrs {
+                        attrs
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                }
+            },
         })
     }
 

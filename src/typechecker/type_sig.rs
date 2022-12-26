@@ -3,6 +3,8 @@ use std::{collections::HashMap, hash::Hash};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
+use crate::tokenizer::Attribute;
+
 use super::{
     context::{StructId, TypeRef},
     typed_ast::TypedFunctionDefinition,
@@ -324,6 +326,7 @@ pub struct FunctionType<'fn_type> {
     pub variadic: bool,
     pub has_self_param: bool,
     pub name: String,
+    pub attrs: Vec<Attribute>,
 }
 
 impl<'fn_type> PartialEq for FunctionType<'fn_type> {

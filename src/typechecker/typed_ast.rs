@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     ast::{Declaration, FunctionDefinition, ModulePath, StructDeclaration, Use},
     lowering::ModuleId,
-    tokenizer::{AssignmentOperator, Literal, Operator},
+    tokenizer::{AssignmentOperator, Attribute, Literal, Operator},
 };
 
 use super::{
@@ -67,6 +67,7 @@ pub struct TypedFunctionDefinition<'ast> {
     pub fn_ty: TypeRef<'ast>,
     pub variadic: bool,
     pub has_self_param: bool,
+    pub attrs: Vec<Attribute>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,6 +77,7 @@ pub struct TypedFunctionDeclaration<'ast> {
     pub params: HashMap<String, TypedFunctionParameter<'ast>>,
     pub fn_ty: TypeRef<'ast>,
     pub variadic: bool,
+    pub attrs: Vec<Attribute>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

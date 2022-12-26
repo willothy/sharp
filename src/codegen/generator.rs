@@ -156,12 +156,21 @@ impl<'gen> CodeGenerator<'gen> {
             match &source_item.ty {
                 TypedExportType::Function(f) => {
                     let full_name = self.canonicalize_fn_name(name, &source_mod.path);
+                    let no_mangle = f
+                        .attrs
+                        .iter()
+                        .find(|a| a.val.as_str() == "no-mangle")
+                        .is_some();
                     local_ctx.add_name(
                         name.clone(),
                         CodegenName {
                             name: full_name.clone(),
                             ty: Rc::new(CodegenType::new(
-                                full_name,
+                                if no_mangle {
+                                    name.clone()
+                                } else {
+                                    full_name.clone()
+                                },
                                 TypeSignature::Function(f.clone()),
                                 Some(self.ctx.function_to_llvm_ty(&f, &local_ctx.structs)?),
                             )),
@@ -198,8 +207,18 @@ impl<'gen> CodeGenerator<'gen> {
         for def in &module.borrow().fn_defs {
             let t = def.fn_ty.sig();
             let t = if let TypeSignature::Function(fn_t) = t.clone() {
+                let no_mangle = fn_t
+                    .attrs
+                    .iter()
+                    .find(|a| a.val.as_str() == "no-mangle")
+                    .is_some();
+                let fn_name = if no_mangle {
+                    def.name.clone()
+                } else {
+                    self.canonicalize_fn_name(&def.name, &module.get_path())
+                };
                 Rc::from(CodegenType::new(
-                    self.canonicalize_fn_name(&def.name, &module.get_path()),
+                    fn_name,
                     t,
                     Some(self.ctx.function_to_llvm_ty(&fn_t, &local_ctx.structs)?),
                 ))
@@ -217,8 +236,19 @@ impl<'gen> CodeGenerator<'gen> {
         for decl in &module.borrow().fn_decls {
             let t = decl.fn_ty.sig();
             let t = if let TypeSignature::Function(fn_t) = t.clone() {
+                let no_mangle = fn_t
+                    .attrs
+                    .iter()
+                    .find(|a| a.val.as_str() == "no-mangle")
+                    .is_some();
+                let fn_name = if no_mangle {
+                    decl.name.clone()
+                } else {
+                    self.canonicalize_fn_name(&decl.name, &module.get_path())
+                };
+                println!("fn_name: {} ({})", fn_name, no_mangle);
                 Rc::from(CodegenType::new(
-                    self.canonicalize_fn_name(&decl.name, &module.get_path()),
+                    fn_name,
                     t,
                     Some(self.ctx.function_to_llvm_ty(&fn_t, &local_ctx.structs)?),
                 ))
@@ -325,11 +355,11 @@ impl<'gen> CodeGenerator<'gen> {
     ) -> Result<(), Box<dyn Error>> {
         debug!("generator::CodeGenerator::codegen_fn_decl");
         let Some(func_reg) = local_ctx.names.get(&func.name) else {
-            return Err(format!("Function not found: {}", func.name).into());
+            return Err(format!("Function not found: {} ({})", func.name, line!()).into());
         };
 
         let Some(llvm_ty) = func_reg.ty.llvm_ty.clone() else {
-            return Err(format!("Function not found: {}", func.name).into());
+            return Err(format!("Function not found: {} ({})", func.name, line!()).into());
         };
 
         let _llvm_fn = self.ctx.llvm_module.add_function(
@@ -364,11 +394,11 @@ impl<'gen> CodeGenerator<'gen> {
         } else if let Some(func_reg) = local_ctx.names.get(&func.name) {
             func_reg
         } else {
-            return Err(format!("fn_def: Function not found: {}", func_name).into());
+            return Err(format!("fn_def: Function not found: {} ({})", func_name, line!()).into());
         };
 
         let Some(llvm_ty) = func_reg.ty.llvm_ty.clone() else {
-            return Err(format!("fn_def: Function type not found: {}", func_name).into());
+            return Err(format!("fn_def: Function type not found: {} ({})", func_name, line!()).into());
         };
 
         let llvm_fn = if let Some(func) = self.ctx.llvm_module.get_function(&func_name) {
@@ -1258,6 +1288,8 @@ impl<'gen> CodeGenerator<'gen> {
             return Ok(func);
         }
 
+        // TODO: Fix this, it's hacky
+        println!("names: {:#?}", local_ctx.names);
         let func = if let Some((_, func)) = local_ctx
             .names
             .iter()
@@ -1267,7 +1299,7 @@ impl<'gen> CodeGenerator<'gen> {
         } else if let Some(func) = local_ctx.names.get(fn_name) {
             func
         } else {
-            return Err(format!("Function not found: {}", fn_name).into());
+            return Err(format!("Function not found: {} ({})", fn_name, line!()).into());
         };
 
         let llvm_ty = func.ty.llvm_ty.clone().unwrap();

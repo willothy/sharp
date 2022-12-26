@@ -73,7 +73,8 @@ impl<'tc> TypeChecker<'tc> {
             params,
             variadic,
             has_self_param: _,
-            name: _
+            name: _,
+            attrs
         }) = &fn_type.sig else {
             return Err(format!(
                 "Expected function type, found {:?}",
@@ -90,11 +91,12 @@ impl<'tc> TypeChecker<'tc> {
             );
         }
         Ok(TypedFunctionDeclaration {
-            name: self.name_prefix(&function.name),
+            name: function.name.clone(),
             ret_ty: return_type.clone(),
             params: params.clone(),
             fn_ty: new_type(fn_type.clone()),
             variadic: variadic.clone(),
+            attrs: function.attrs.clone(),
         })
     }
 
@@ -111,7 +113,8 @@ impl<'tc> TypeChecker<'tc> {
             params,
             variadic,
             has_self_param,
-            name: _
+            name: _,
+            attrs
         }) = &fn_type.sig else {
             return Err(format!(
                 "Expected function type, found {:?}",
@@ -153,6 +156,7 @@ impl<'tc> TypeChecker<'tc> {
             fn_ty: new_type(fn_type.clone()),
             variadic: variadic.clone(),
             has_self_param: *has_self_param,
+            attrs: function.attrs.clone(),
         })
     }
 
@@ -184,6 +188,7 @@ impl<'tc> TypeChecker<'tc> {
                 variadic: function.variadic,
                 has_self_param: false,
                 name: function.name.clone(),
+                attrs: function.attrs.clone(),
             }),
         })
     }
@@ -221,6 +226,7 @@ impl<'tc> TypeChecker<'tc> {
                 variadic: function.variadic,
                 has_self_param,
                 name: function.name.clone(),
+                attrs: function.attrs.clone(),
             }),
         })
     }

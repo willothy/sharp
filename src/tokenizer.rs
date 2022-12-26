@@ -12,8 +12,8 @@ use nom::{
         self,
         complete::{alpha1, alphanumeric1, multispace0},
     },
-    combinator::{map, recognize},
-    multi::many0_count,
+    combinator::{map, opt, recognize},
+    multi::{many0_count, many1, separated_list1},
     sequence::{pair, preceded, terminated, tuple},
     Err, IResult,
 };
@@ -80,11 +80,17 @@ impl Display for TokenPosition {
 #[derive(Debug, PartialEq, Clone)]
 pub enum TokenKind {
     Identifier(String),
+    Attributes(Vec<Attribute>),
     Literal(Literal),
     Operator(Operator),
     Keyword(Keyword),
     Symbol(Symbol),
     Comment,
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub struct Attribute {
+    pub val: String,
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -556,6 +562,33 @@ fn identifier<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
     Ok((input, TokenKind::Identifier(ident.to_string())))
 }
 
+fn attribute<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
+    let (input, _) = tag("#(")(input)?;
+    /* let (input, list) = separated_list1(
+        terminated(tag(","), multispace0),
+        ,
+    )(input)?; */
+
+    // Comma separated list, optional spaces, no trailing comma, indentifiers can be any alphanumeric character, including underscores and dashes
+    let (input, list) = separated_list1(
+        terminated(tag(","), multispace0),
+        recognize(pair(
+            alt((alpha1, tag("_"))),
+            many0_count(alt((alphanumeric1, tag("_"), tag("-")))),
+        )),
+    )(input)?;
+    let (input, _) = tag(")")(input)?;
+
+    Ok((
+        input,
+        TokenKind::Attributes(
+            list.iter()
+                .map(|s| Attribute { val: s.to_string() })
+                .collect(),
+        ),
+    ))
+}
+
 fn token<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
     let (input, token) = terminated(
         preceded(
@@ -571,6 +604,7 @@ fn token<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
                 char_literal,
                 boolean_literal,
                 identifier,
+                attribute,
             )),
         ),
         multispace0,

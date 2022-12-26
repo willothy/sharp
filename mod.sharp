@@ -1,8 +1,10 @@
 use self::bingles::three;
 use self::bingles::Test;
+use self::bingles::printf;
 
 mod bingles {
-    use super::printf;
+    #(no-mangle)
+    fn printf(str fmt, ...) -> i32;
 
     fn three() -> i32 {
         printf("three: %d\n", 3);
@@ -14,10 +16,9 @@ mod bingles {
         i32 b,
         i32 c
     }
-
 }
 
-fn printf(str fmt, ...) -> i32;
+
 
 fn main() -> i32 {
     let Test a = Test{

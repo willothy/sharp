@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
-use crate::tokenizer::{AssignmentOperator, Literal, TokenPosition};
+use crate::tokenizer::{AssignmentOperator, Attribute, Literal, TokenPosition};
 
 use super::tokenizer::Operator;
 
@@ -72,6 +72,7 @@ pub struct FunctionDefinition {
     pub body: Block,
     pub variadic: bool,
     pub span: NodeSpan,
+    pub attrs: Vec<Attribute>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -80,6 +81,7 @@ pub struct FunctionDeclaration {
     pub return_type: Option<String>,
     pub params: Vec<FunctionParameter>,
     pub variadic: bool,
+    pub attrs: Vec<Attribute>,
     //pub span: NodeSpan,
 }
 
