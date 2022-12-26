@@ -3,7 +3,7 @@ use self::bingles::Test;
 use self::bingles::printf;
 
 mod bingles {
-    #(no-mangle, test)
+    #(no-mangle)
     fn printf(str fmt, ...) -> i32;
 
     fn three() -> i32 {
@@ -17,8 +17,6 @@ mod bingles {
         i32 c
     }
 }
-
-
 
 fn main() -> i32 {
     let Test a = Test{

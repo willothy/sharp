@@ -1,10 +1,4 @@
-use std::{
-    borrow::BorrowMut,
-    cell::{Ref, RefCell},
-    collections::HashMap,
-    error::Error,
-    rc::Rc,
-};
+use std::{borrow::BorrowMut, cell::RefCell, collections::HashMap, error::Error, rc::Rc};
 
 use inkwell::{
     module::Linkage,
@@ -14,12 +8,11 @@ use inkwell::{
 };
 
 use crate::{
-    ast::{Module, ModulePath},
-    codegen::context::{CodegenLLVMType, GetOrAddFunction, ImplCtx},
-    debug, debugln,
+    ast::ModulePath,
+    codegen::context::ImplCtx,
+    debug,
     tokenizer::Literal,
     typechecker::{
-        type_sig::StructType,
         typed_ast::{
             TypedExportType, TypedExpression, TypedExpressionData, TypedFunctionCall, TypedImport,
             TypedLiteral, TypedLoopStatement, TypedModule, TypedVarAssignment,
@@ -33,7 +26,7 @@ use crate::{
         context::TypeSig,
         type_sig::TypeSignature,
         typed_ast::{
-            TypedDeclaration, TypedFunctionDeclaration, TypedFunctionDefinition, TypedIfExpression,
+            TypedFunctionDeclaration, TypedFunctionDefinition, TypedIfExpression,
             TypedMemberAccess, TypedResultStatement, TypedReturnStatement, TypedStatement,
             TypedStructDeclaration, TypedStructInitializer, TypedVarDeclaration,
         },
@@ -141,8 +134,8 @@ impl<'gen> CodeGenerator<'gen> {
             let TypedImport {
                 name,
                 source_module,
-                local,
-                ty,
+                local: _,
+                ty: _,
             } = dep;
             let Some(source_mod) = self.ctx.tc_mod.modules.get(*source_module) else {
                 return Err(format!("Failed to generate IR for module: Module not found: {}", name).into());
@@ -313,7 +306,7 @@ impl<'gen> CodeGenerator<'gen> {
         };
         let methods = methods_t.methods.clone();
 
-        for (name, method) in &methods {
+        for (_, method) in &methods {
             let TypeSignature::Function(func_ty) = method.fn_ty.sig() else {
                 return Err(format!("Type not found: {:?} {}:{}", method.fn_ty.sig(), file!(), line!()).into());
             };

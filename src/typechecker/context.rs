@@ -2,8 +2,6 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ast::ModulePath, lowering::ModuleId};
-
 use super::type_sig::{Name, PointerType, PrimitiveType, StructType, Type, TypeSignature};
 use serde_with::serde_as;
 pub type StructId = usize;
@@ -100,7 +98,7 @@ impl<'ctx> ModuleTypeCheckCtx<'ctx> {
     }
 
     pub fn with_types(other: &Self) -> Self {
-        let mut ctx = Self {
+        let ctx = Self {
             functions: HashMap::new(),
             types: other.types.clone(),
             struct_types: other.struct_types.clone(),
@@ -183,19 +181,6 @@ impl<'ctx> ModuleTypeCheckCtx<'ctx> {
             }
             Ok(ptr_type)
         }
-    }
-
-    pub fn add_type(&mut self, type_name: String, type_: TypeRef<'ctx>) -> Result<(), String> {
-        if self.types.contains_key(&type_name) {
-            return Err(format!(
-                "Type {} already exists {}:{}",
-                type_name,
-                file!(),
-                line!()
-            ));
-        }
-        self.types.insert(type_name, type_);
-        Ok(())
     }
 }
 

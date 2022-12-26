@@ -1,16 +1,16 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ast::{Declaration, FunctionDefinition, ModulePath, StructDeclaration, Use},
+    ast::ModulePath,
     lowering::ModuleId,
     tokenizer::{AssignmentOperator, Attribute, Literal, Operator},
 };
 
 use super::{
     context::{ModuleTypeCheckCtx, StructId, TypeRef},
-    type_sig::{FunctionType, StructType, TypedFunctionParameter, TypedStructField},
+    type_sig::{FunctionType, TypedFunctionParameter, TypedStructField},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

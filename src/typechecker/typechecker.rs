@@ -3,38 +3,21 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::{
-    ast::{
-        self, Block, Declaration, Expression, FmtPath, FunctionDeclaration, FunctionDefinition,
-        MemberAccess, Module, ModulePath, ScopeResolution, StructDeclaration, StructInitializer,
-        StructInitializerField, VarDeclaration,
-    },
-    debug, debugln,
-    lowering::{Export, Intermediate, IntermediateModule, IntermediateProgram, ModuleId},
-    tokenizer::{Literal, Operator},
+    ast::{self, ModulePath},
+    lowering::{Intermediate, IntermediateProgram, ModuleId},
     typechecker::{
         context::new_type,
-        type_sig::{Name, PointerType, Type, TypeSignature},
-        typed_ast::{TypedExpression, TypedResultStatement, TypedReturnStatement},
+        type_sig::{Name, Type, TypeSignature},
     },
 };
 
 use super::{
-    context::{LocalTypecheckContext, ModuleTypeCheckCtx, StructId, TypeRef, TypeSig},
-    type_sig::{self, FunctionType, StructType, TypedFunctionParameter, TypedStructField},
+    context::{ModuleTypeCheckCtx, StructId, TypeSig},
     typed_ast::{
-        self, TypedBlock, TypedDeclaration, TypedExport, TypedExportType, TypedExpressionData,
-        TypedFunctionCall, TypedFunctionDeclaration, TypedFunctionDefinition, TypedIfExpression,
-        TypedImport, TypedLiteral, TypedMemberAccess, TypedModule, TypedStatement,
-        TypedStructDeclaration, TypedStructInitializer, TypedStructInitializerField,
-        TypedVarAssignment,
+        TypedExport, TypedExportType, TypedFunctionDeclaration, TypedFunctionDefinition,
+        TypedImport, TypedModule, TypedStructDeclaration,
     },
 };
-
-/* #[derive(Debug, Clone)]
-pub struct TypeCheckModule<'tc> {
-    pub ctx: ModuleTypeCheckCtx<'tc>,
-    pub module: Rc<RefCell<TypedModule<'tc>>>,
-} */
 
 #[derive(Debug, Clone)]
 pub struct TypeChecker<'tc> {
@@ -117,27 +100,6 @@ impl<'tc> TypeChecker<'tc> {
             current_module_path: Vec::new(),
             next_struct_id: 0,
         }
-    }
-
-    pub fn get_intermediate_module_export(&self, path: &ModulePath) -> Option<Export> {
-        let mut path = path.clone();
-        let Some(name) = path.pop() else {
-            return None;
-        };
-        let Some(module) = self.intermediate.get_module_by_path(&path).ok() else {
-            return None;
-        };
-        let module = module.borrow();
-        let Some(export) = module.exports.get(&name) else {
-            return None;
-        };
-        Some(export.clone())
-    }
-
-    //pub fn combine_modules(&mut self) -> Result<IntermediateProgram
-
-    pub fn resolve_types(&mut self) -> Result<TypeCheckerOutput<'tc>, String> {
-        self.typecheck()
     }
 
     pub fn typecheck(&mut self) -> Result<TypeCheckerOutput<'tc>, String> {
@@ -300,8 +262,6 @@ impl<'tc> TypeChecker<'tc> {
 
             let parent = module.borrow().parent.clone();
 
-            let name = module.borrow().name.clone();
-
             //let exports = self.resolve_exports(module.clone(), &submodules)?;
 
             let new_ctx = ModuleTypeCheckCtx::with_types(&self.ctx);
@@ -413,75 +373,9 @@ impl<'tc> TypeChecker<'tc> {
         Ok(exports)
     } */
 
-    pub fn name_prefix(&self, name: &str) -> String {
-        let mod_path = self.current_module_path.fmt_path_no_main();
-        if mod_path.as_str() == "main" {
-            name.to_string()
-        } else {
-            format!("{}::{}", mod_path, name)
-        }
-    }
-
     pub fn get_next_struct_id(&mut self) -> usize {
         let id = self.next_struct_id;
         self.next_struct_id += 1;
         id
-    }
-
-    pub fn typecheck_struct_decl(
-        &mut self,
-        structure: &StructDeclaration,
-    ) -> Result<TypedStructDeclaration<'tc>, String> {
-        debug!("typechecker::typecheck_struct_decl");
-        let id = self.get_next_struct_id();
-        self.ctx.add_type(
-            structure.name.clone(),
-            new_type(Type::new(TypeSignature::Struct(id))),
-        )?;
-        let mut fields = HashMap::new();
-        for field in &structure.fields {
-            let Ok(type_val) = self.ctx.get_type(field.type_name.clone()) else {
-            return Err(format!("{} is not a valid type 590", field.type_name));
-        };
-
-            fields.insert(
-                field.name.clone(),
-                TypedStructField {
-                    name: field.name.clone(),
-                    ty: type_val.clone(),
-                    idx: field.idx,
-                },
-            );
-        }
-
-        let mut struct_type = StructType {
-            name: structure.name.clone(),
-            fields: fields.clone(),
-            methods: HashMap::new(),
-            id,
-        };
-
-        let Ok(type_ref) = self.ctx.get_type(structure.name.clone()) else {
-            return Err("".into())
-        };
-        //*type_ref.borrow_mut() = Type::new(TypeSignature::Struct(id));
-
-        for method in &structure.methods {
-            // function def
-            let func = self
-                .typecheck_fn_def(method, LocalTypecheckContext::impl_method(type_ref.clone()))?;
-            struct_type.methods.insert(method.name.clone(), func);
-        }
-
-        self.ctx.struct_types.insert(id, struct_type.clone());
-        //self.ctx.struct_types.insert(id, struct_type.clone());
-
-        Ok(TypedStructDeclaration {
-            name: structure.name.clone(),
-            fields: fields.values().map(|field| field.clone()).collect(),
-            ty: type_ref,
-            id,
-            methods: struct_type.methods.clone(),
-        })
     }
 }

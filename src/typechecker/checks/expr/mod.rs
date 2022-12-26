@@ -39,7 +39,7 @@ impl<'tc> TypeChecker<'tc> {
                 let ScopeResolution {
                     object,
                     member,
-                    span,
+                    span: _,
                 } = scope_resolution;
                 debugln!();
                 let mut object = object.as_ref();
@@ -48,7 +48,7 @@ impl<'tc> TypeChecker<'tc> {
                     let ScopeResolution {
                         object: new_object,
                         member,
-                        span,
+                        span: _,
                     } = scope_resolution;
                     if let Expression::Identifier { name, .. } = member.as_ref() {
                         path.push(name);

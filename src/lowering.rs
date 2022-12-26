@@ -37,31 +37,6 @@ pub struct IntermediateModule {
     pub id: ModuleId,
 }
 
-#[derive(Debug, Clone)]
-pub struct CombinedIntermediateModule {
-    pub fn_defs: Vec<FunctionDefinition>,
-    pub fn_decls: Vec<FunctionDeclaration>,
-    pub structs: Vec<StructDeclaration>,
-    pub name: String,
-}
-
-impl CombinedIntermediateModule {
-    pub fn new(name: String) -> CombinedIntermediateModule {
-        CombinedIntermediateModule {
-            fn_defs: Vec::new(),
-            fn_decls: Vec::new(),
-            structs: Vec::new(),
-            name,
-        }
-    }
-
-    pub fn consume(&mut self, other: IntermediateModule) {
-        self.fn_defs.extend(other.fn_defs);
-        self.fn_decls.extend(other.fn_decls);
-        self.structs.extend(other.structs);
-    }
-}
-
 pub trait Intermediate {
     fn get_name(&self) -> String;
     fn get_path(&self) -> Vec<String>;
@@ -114,14 +89,6 @@ impl IntermediateProgram {
         self.modules.push(module.clone());
         self.current_module_idx += 1;
         module_ref.id
-    }
-
-    pub fn combine_modules(&mut self) -> Result<CombinedIntermediateModule, String> {
-        let mut combined = CombinedIntermediateModule::new("main".to_string());
-        for module in &mut self.modules {
-            combined.consume(module.borrow().clone());
-        }
-        Ok(combined)
     }
 
     pub fn lower(
@@ -245,14 +212,6 @@ impl IntermediateProgram {
         intermediate.borrow_mut().submodules.extend(submodules);
 
         Ok(this_module)
-    }
-
-    pub fn get_module_by_path(
-        &self,
-        path: &Vec<String>,
-    ) -> Result<Rc<RefCell<IntermediateModule>>, String> {
-        let id = self.get_module_id(path)?;
-        Ok(self.modules[id].clone())
     }
 
     pub fn get_module_id(&self, path: &Vec<String>) -> Result<ModuleId, String> {

@@ -95,13 +95,6 @@ impl<'t> TypeSignature<'t> {
         }
     }
 
-    pub fn fn_name(&self) -> Option<String> {
-        match &self {
-            TypeSignature::Function(f) => Some(f.name.clone()),
-            _ => None,
-        }
-    }
-
     pub fn struct_id(&self) -> Option<StructId> {
         match self {
             TypeSignature::Struct(s) => Some(*s),

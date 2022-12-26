@@ -2,7 +2,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use crate::{
     ast::{
-        Block, Declaration, Expression, FunctionCall, FunctionDeclaration, FunctionDefinition,
+        Block, Expression, FunctionCall, FunctionDeclaration, FunctionDefinition,
         FunctionParameter, IfExpression, LoopStatement, MemberAccess, Module, ModulePath, NodeSpan,
         ResultStatement, ReturnStatement, ScopeResolution, Statement, StructDeclaration,
         StructField, StructInitializer, StructInitializerField, Use, VarAssignment, VarDeclaration,

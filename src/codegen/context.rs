@@ -1,6 +1,6 @@
 // Author: Will Hopkins
 
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{collections::HashMap, rc::Rc};
 
 use inkwell::{
     basic_block::BasicBlock,
@@ -11,12 +11,10 @@ use inkwell::{
 };
 
 use crate::{
-    debug, debugln,
+    debug,
     typechecker::{
-        self,
         context::{StructId, TypeSig},
         type_sig::{self, FunctionType, PrimitiveType, StructType, TypeSignature},
-        typed_ast::TypedModule,
         TypeCheckerOutput,
     },
 };
@@ -164,10 +162,6 @@ impl<'ctx> LocalCodegenContext<'ctx> {
         } else {
             0
         }
-    }
-
-    pub fn get_type_by_name(&self, name: &str) -> Option<&Rc<CodegenType<'ctx>>> {
-        self.types.values().find(|t| t.name.as_str() == name)
     }
 }
 

@@ -7,7 +7,7 @@ use crate::{
         typed_ast::{
             TypedExportType, TypedExpression, TypedExpressionData, TypedFunctionCall, TypedImport,
         },
-        TCModule, TypeChecker,
+        TypeChecker,
     },
 };
 
@@ -84,7 +84,7 @@ impl<'tc> TypeChecker<'tc> {
                 let ScopeResolution {
                     object,
                     member,
-                    span,
+                    span: _,
                 } = scope_resolution;
                 debugln!();
                 let mut object = *object;
@@ -93,7 +93,7 @@ impl<'tc> TypeChecker<'tc> {
                     let ScopeResolution {
                         object: new_object,
                         member,
-                        span,
+                        span: _,
                     } = scope_resolution;
                     if let Expression::Identifier { name, .. } = *member {
                         path.push(name);
@@ -113,11 +113,6 @@ impl<'tc> TypeChecker<'tc> {
                 };
 
                 let first = path.first().unwrap();
-                let rest = if path.len() > 2 {
-                    Some(&path[1..path.len() - 1])
-                } else {
-                    None
-                };
 
                 // Resolve type of object
                 if let Ok(object_type) = self.ctx.get_type(first.clone()) {

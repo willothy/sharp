@@ -28,14 +28,6 @@ pub struct Module {
     pub path: ModulePath,
 }
 
-#[derive(Debug, PartialEq, Clone)]
-pub enum Declaration {
-    FunctionDef(FunctionDefinition),
-    FunctionDecl(FunctionDeclaration),
-    Struct(StructDeclaration),
-    Module(Module),
-}
-
 pub type ModulePath = Vec<String>;
 
 pub trait FmtPath {

@@ -74,7 +74,7 @@ impl<'tc> TypeChecker<'tc> {
             variadic,
             has_self_param: _,
             name: _,
-            attrs
+            attrs: _
         }) = &fn_type.sig else {
             return Err(format!(
                 "Expected function type, found {:?}",
@@ -114,7 +114,7 @@ impl<'tc> TypeChecker<'tc> {
             variadic,
             has_self_param,
             name: _,
-            attrs
+            attrs: _
         }) = &fn_type.sig else {
             return Err(format!(
                 "Expected function type, found {:?}",
