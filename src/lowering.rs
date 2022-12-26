@@ -73,16 +73,18 @@ pub struct IntermediateProgram {
 }
 
 impl IntermediateProgram {
-    pub fn new() -> IntermediateProgram {
-        IntermediateProgram {
+    pub fn lower(root: Rc<RefCell<Module>>) -> Result<IntermediateProgram, String> {
+        let mut prog = IntermediateProgram {
             root: None,
             modules: Vec::new(),
             module_ids: HashMap::new(),
             current_module_idx: 0,
-        }
+        };
+        prog.lower_module(root, None)?;
+        Ok(prog)
     }
 
-    pub fn add_module(&mut self, module: Rc<RefCell<IntermediateModule>>) -> ModuleId {
+    fn add_module(&mut self, module: Rc<RefCell<IntermediateModule>>) -> ModuleId {
         let module_ref = module.borrow();
         self.module_ids
             .insert(module_ref.path.clone(), module_ref.id);
@@ -91,7 +93,7 @@ impl IntermediateProgram {
         module_ref.id
     }
 
-    pub fn lower(
+    fn lower_module(
         &mut self,
         module: Rc<RefCell<Module>>,
         parent: Option<ModuleId>,
@@ -121,7 +123,8 @@ impl IntermediateProgram {
             .submodules
             .iter()
             .map(|submodule| {
-                let lowered_id = self.lower(submodule.clone(), Some(intermediate.borrow().id))?;
+                let lowered_id =
+                    self.lower_module(submodule.clone(), Some(intermediate.borrow().id))?;
                 let Some(lowered) = self.modules.get(lowered_id) else {
                         return Err(format!("Invalid module id: {}", lowered_id));
                     };

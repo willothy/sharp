@@ -12,7 +12,7 @@ use nom::{
         self,
         complete::{alpha1, alphanumeric1, multispace0},
     },
-    combinator::{map, recognize},
+    combinator::{map, opt, recognize},
     multi::{many0_count, separated_list1},
     sequence::{pair, preceded, terminated, tuple},
     Err, IResult,
@@ -494,14 +494,20 @@ fn integer_literal<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
 }
 
 fn string_literal<'a>(input: Span<'a>) -> IResult<Span<'a>, TokenKind> {
-    let (input, (_, text, _)) = tuple((tag("\""), is_not("\""), tag("\"")))(input)?;
-    let mut text = text.to_string();
-    text = text.replace("\\n", "\n"); // Newline
-    text = text.replace("\\t", "\t"); // Tab
-    text = text.replace("\\r", "\r"); // Carriage return
-    text = text.replace("\\\"", "\""); // Double quote
-    text = text.replace("\\'", "'"); // Single quote
-    text = text.replace("\\\"", "\""); // Double quote
+    let (input, (_, text, _)) = tuple((tag("\""), opt(is_not("\"")), tag("\"")))(input)?;
+    let text = if let Some(text) = text {
+        let mut text = text.to_string();
+        text = text.replace("\\n", "\n"); // Newline
+        text = text.replace("\\t", "\t"); // Tab
+        text = text.replace("\\r", "\r"); // Carriage return
+        text = text.replace("\\\"", "\""); // Double quote
+        text = text.replace("\\'", "'"); // Single quote
+        text = text.replace("\\\"", "\""); // Double quote
+        text
+    } else {
+        "".to_owned()
+    };
+
     Ok((input, TokenKind::Literal(Literal::Str(text, input.into()))))
 }
 

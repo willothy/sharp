@@ -1,9 +1,11 @@
 // Author: Will Hopkins
 
-use std::{fs, path::PathBuf};
+use std::{borrow::Borrow, fs, path::PathBuf};
 
-use inkwell::targets::{
-    CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
+use inkwell::{
+    passes::{PassManager, PassManagerBuilder},
+    targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine},
+    OptimizationLevel,
 };
 
 use crate::tokenizer::Span;
@@ -19,10 +21,8 @@ mod parser;
 mod tokenizer;
 mod typechecker;
 
-const DEBUG_WRITE_IR_FILE: bool = true;
-
-// TODO: Static struct member functions (::new(), etc.)
-// TODO: Primitive member functions
+// TODO: Fix static member functions
+// TODO: Member functions for all types
 // TODO: Modules and imports - In progress
 // TODO: Arrays
 // TODO: Traits
@@ -44,105 +44,77 @@ fn run<'a>() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Failed to tokenize source".into());
     };
 
-    if args.tokens_print {
-        println!("{:#?}", tokens);
-    }
+    let parsed_module = parser::parse(tokens, source.to_string(), "main".into())?;
 
-    let module = parser::parse(tokens, source.to_string(), "main".into())?;
-
-    if args.ast_print {
-        /* println!("{:#?}", module.borrow_mut().clone()); */
-        /* println!(
-            "lower: {:#?}",
-            module_res::exports::lower(module.clone(), None)
-                .borrow_mut()
-                .clone()
-        ) */
-    }
-
-    let mut intermediate = lowering::IntermediateProgram::new();
-    let lowered = intermediate.lower(module, None)?;
-    //let combined = intermediate.combine_modules()?;
-
-    if args.ast_print {
-        if args.json_ast {
-            /* for module in &intermediate.modules {
-                println!("{}", serde_json::to_string_pretty(module)?);
-            } */
-        } else {
-            println!("{:#?}", lowered);
-        };
-    }
-
-    let mut tc = typechecker::TypeChecker::new(intermediate);
-    let checked = tc.typecheck()?;
-
-    if args.typed_ast_print {
-        if args.json_ast {
-            let json = serde_json::to_string_pretty(&checked.modules)?;
-            println!("{}", json);
-            if let Some(ast_path) = args.write_ast_to {
-                let ast_path = PathBuf::from(ast_path);
-                std::fs::write(ast_path, json)?;
-            }
-        } else {
-            println!("{:#?}", checked);
-        }
-    }
+    let intermediate = lowering::IntermediateProgram::lower(parsed_module)?;
+    let checked = typechecker::TypeChecker::new(intermediate).typecheck()?;
 
     let llvm_ctx = inkwell::context::Context::create();
-    let mut generator = CodeGenerator::new(checked.clone(), &llvm_ctx);
-    let generated_mod = generator.codegen()?;
-    //let generated_mod = generator.codegen_module(checked)?;
+    let generated_mod = CodeGenerator::new(checked, &llvm_ctx).codegen()?;
 
-    if args.ir_print {
-        println!("{}", generated_mod.print_to_string().to_string());
-    }
-
-    let module_str = generated_mod.to_string();
-    let mod_path = args.output;
-    if DEBUG_WRITE_IR_FILE || args.compile {
-        std::fs::write(&mod_path, module_str)?;
-        //generated_mod.write_bitcode_to_path(mod_path.as_path());
-    }
-
-    if args.compile {
-        let mod_path_str = mod_path.to_str().unwrap();
-        let out_path = mod_path.with_file_name("test.s");
-        //Target::initialize_aarch64(&InitializationConfig::default());
-        Target::initialize_native(&InitializationConfig::default())?;
-        let triple = TargetMachine::get_default_triple();
-        let t = Target::from_triple(&triple)?;
-        let Some(target_machine) = t.create_target_machine(
+    Target::initialize_native(&InitializationConfig::default())?;
+    let triple = TargetMachine::get_default_triple();
+    let t = Target::from_triple(&triple)?;
+    let Some(target_machine) = t.create_target_machine(
         &triple,
         TargetMachine::get_host_cpu_name().to_str().unwrap(),
         TargetMachine::get_host_cpu_features().to_str().unwrap(),
         inkwell::OptimizationLevel::Aggressive,
-            RelocMode::Default,
+            RelocMode::DynamicNoPic,
             CodeModel::Default,
-        ) else {
-            return Err("Failed to create target machine".into());
-        };
-        generated_mod.set_triple(&triple);
-        generated_mod.set_data_layout(&target_machine.get_target_data().get_data_layout());
-        generated_mod.verify()?;
-        target_machine.write_to_file(&generated_mod, FileType::Assembly, &out_path)?;
-        let output = std::process::Command::new("clang")
-            .arg(mod_path_str)
-            .arg("-o")
-            .arg(out_path.with_extension(""))
-            .arg("-fcolor-diagnostics")
-            .output()?;
+    ) else {
+        return Err("Failed to create target machine".into());
+    };
+    generated_mod.set_triple(&triple);
+    generated_mod.set_data_layout(&target_machine.get_target_data().get_data_layout());
+    generated_mod.verify()?;
 
-        let out = snailquote::unescape(String::from_utf8(output.stdout)?.as_str())?;
-        let err = snailquote::unescape(String::from_utf8(output.stderr)?.as_str())?;
+    // Optimization
+    let pmb = PassManagerBuilder::create();
+    pmb.set_optimization_level(OptimizationLevel::Aggressive);
 
-        println!("{}", out);
-        println!("{}", err);
+    let mpm = PassManager::create(());
+    pmb.populate_module_pass_manager(&mpm);
+
+    mpm.add_constant_merge_pass();
+    mpm.add_dead_arg_elimination_pass();
+    mpm.add_dead_store_elimination_pass();
+    mpm.add_global_dce_pass();
+    mpm.add_sccp_pass();
+    mpm.add_strip_dead_prototypes_pass();
+    mpm.add_strip_symbol_pass();
+    mpm.add_loop_vectorize_pass();
+    mpm.add_loop_unroll_pass();
+    mpm.add_promote_memory_to_register_pass();
+    mpm.add_reassociate_pass();
+    mpm.add_memcpy_optimize_pass();
+    mpm.add_global_optimizer_pass();
+    mpm.add_cfg_simplification_pass();
+    mpm.add_instruction_combining_pass();
+    mpm.add_gvn_pass();
+    mpm.add_licm_pass();
+    mpm.add_loop_deletion_pass();
+    mpm.add_loop_idiom_pass();
+    mpm.add_loop_rotate_pass();
+    mpm.add_function_inlining_pass();
+    mpm.add_merge_functions_pass();
+    mpm.add_verifier_pass();
+
+    // Validate module
+    if !mpm.run_on(&generated_mod) {
+        return Err("Failed to optimize module".into());
+    }
+    generated_mod.verify()?;
+    // Module is valid
+
+    if args.ir_print {
+        generated_mod.print_to_stderr();
     }
 
+    // JIT Execution
     if args.jit_exec {
-        let jit = generated_mod.create_jit_execution_engine(inkwell::OptimizationLevel::Default)?;
+        let jit =
+            generated_mod.create_jit_execution_engine(inkwell::OptimizationLevel::Aggressive)?;
         unsafe {
             let Some(main) = generated_mod.get_function("main") else {
                 return Err("Failed to get main function".into());
@@ -150,6 +122,35 @@ fn run<'a>() -> Result<(), Box<dyn std::error::Error>> {
             jit.run_function(main, &[]);
         }
     }
+
+    // Compilation to object file, asm or binary
+    if args.output_asm {
+        let out_path = args.output.with_extension("s");
+        target_machine.write_to_file(&generated_mod, FileType::Assembly, &out_path)?;
+    } else {
+        let out_path = args.output.with_extension("o");
+        target_machine.write_to_file(&generated_mod, FileType::Object, &out_path)?;
+
+        if !args.output_obj {
+            let out_path = args.output;
+            let output = std::process::Command::new("clang")
+                .arg(out_path.with_extension("o"))
+                .arg("-o")
+                .arg(out_path.clone())
+                .arg("-fcolor-diagnostics")
+                .output()?;
+
+            let out = snailquote::unescape(String::from_utf8(output.stdout)?.as_str())?;
+            let err = snailquote::unescape(String::from_utf8(output.stderr)?.as_str())?;
+
+            println!("{}", out);
+            println!("{}", err);
+
+            // delete object file
+            let _ = std::fs::remove_file(out_path.with_extension("o"));
+        }
+    }
+
     Ok(())
 }
 
@@ -171,15 +172,12 @@ mod tests {
 
         let module = parser::parse(tokens, source.to_string(), "main".into())?;
 
-        let mut intermediate = lowering::IntermediateProgram::new();
-        intermediate.lower(module, None)?;
+        let mut intermediate = lowering::IntermediateProgram::lower(module)?;
 
-        let mut tc = typechecker::TypeChecker::new(intermediate);
-        let checked = tc.typecheck()?;
+        let checked = typechecker::TypeChecker::new(intermediate).typecheck()?;
 
         let llvm_ctx = inkwell::context::Context::create();
-        let mut generator = CodeGenerator::new(checked.clone(), &llvm_ctx);
-        let generated_mod = generator.codegen()?;
+        let generated_mod = CodeGenerator::new(checked, &llvm_ctx).codegen()?;
 
         Target::initialize_native(&InitializationConfig::default())?;
         let triple = TargetMachine::get_default_triple();

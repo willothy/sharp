@@ -1274,23 +1274,23 @@ impl<'gen> CodeGenerator<'gen> {
         local_ctx: &LocalCodegenContext<'gen>,
     ) -> Result<FunctionValue<'gen>, Box<dyn Error>> {
         debug!("generator::CodeGenerator::get_or_declare_function");
-        let func = self.ctx.llvm_module.get_function(&fn_name);
 
-        if let Some(func) = func {
-            return Ok(func);
-        }
-
-        // TODO: Fix this, it's hacky
-        let func = if let Some((_, func)) = local_ctx
-            .names
-            .iter()
-            .find(|(_, reg)| reg.name.as_str() == fn_name)
-        {
-            func
-        } else if let Some(func) = local_ctx.names.get(fn_name) {
-            func
+        let func = if let Some(func) = local_ctx.names.get(fn_name) {
+            if let Some(func) = self.ctx.llvm_module.get_function(&func.name) {
+                return Ok(func);
+            } else {
+                func
+            }
         } else {
-            return Err(format!("Function not found: {} ({})", fn_name, line!()).into());
+            if let Some((_, func)) = local_ctx
+                .names
+                .iter()
+                .find(|(_, reg)| reg.name.as_str() == fn_name)
+            {
+                func
+            } else {
+                return Err(format!("Function not found: {} ({})", fn_name, line!()).into());
+            }
         };
 
         let llvm_ty = func.ty.llvm_ty.clone().unwrap();
@@ -1300,6 +1300,7 @@ impl<'gen> CodeGenerator<'gen> {
             llvm_ty.function()?,
             Some(Linkage::External),
         );
+        //println!("func: {:?}\n{}\n", fn_name, func);
         Ok(func)
     }
 
