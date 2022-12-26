@@ -155,22 +155,22 @@ impl<'gen> CodeGenerator<'gen> {
 
             match &source_item.ty {
                 TypedExportType::Function(f) => {
-                    let full_name = self.canonicalize_fn_name(name, &source_mod.path);
                     let no_mangle = f
                         .attrs
                         .iter()
                         .find(|a| a.val.as_str() == "no-mangle")
                         .is_some();
+                    let full_name = if no_mangle {
+                        name.clone()
+                    } else {
+                        self.canonicalize_fn_name(name, &source_mod.path)
+                    };
                     local_ctx.add_name(
                         name.clone(),
                         CodegenName {
                             name: full_name.clone(),
                             ty: Rc::new(CodegenType::new(
-                                if no_mangle {
-                                    name.clone()
-                                } else {
-                                    full_name.clone()
-                                },
+                                full_name,
                                 TypeSignature::Function(f.clone()),
                                 Some(self.ctx.function_to_llvm_ty(&f, &local_ctx.structs)?),
                             )),
@@ -246,7 +246,6 @@ impl<'gen> CodeGenerator<'gen> {
                 } else {
                     self.canonicalize_fn_name(&decl.name, &module.get_path())
                 };
-                println!("fn_name: {} ({})", fn_name, no_mangle);
                 Rc::from(CodegenType::new(
                     fn_name,
                     t,
